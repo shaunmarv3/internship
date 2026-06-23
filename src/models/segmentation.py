@@ -38,6 +38,7 @@ class DiceFocalLoss(nn.Module):
 
     def forward(self, logits: torch.Tensor, targets: torch.Tensor):
         # logits: B×C×H×W  |  targets: B×H×W
+        targets = targets.long()        # CE/one_hot require int64; albumentations may give int32
         focal = self._focal(logits, targets)
         dice  = self._dice(logits, targets)
         return self.focal_w * focal + self.dice_w * dice

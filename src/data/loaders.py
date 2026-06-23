@@ -190,7 +190,8 @@ class OilSpillDataset(Dataset):
         if self.transform:
             augmented = self.transform(image=img, mask=mask)
             img = augmented["image"]
-            mask = augmented["mask"]
+            # albumentations resize casts masks to int32 — CrossEntropy/one_hot need int64
+            mask = augmented["mask"].long()
         else:
             # default resize + to tensor
             img = torch.from_numpy(img.transpose(2, 0, 1)).float()
