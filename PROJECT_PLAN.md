@@ -133,14 +133,16 @@ That's the whole data story. Krestenitis is dropped (gated + Zenodo binary is su
   dataset/images/           ← EMPTY — SAR images not yet downloaded
 ```
 
-**SAR image pixel format: ⚠️ UNVERIFIED**
+**SAR image pixel format: ✅ CONFIRMED dB (2026-06-23)**
 
-- We have masks but not the actual SAR image TIFFs yet
-- Images are the 40.7 GB Part I download (pending on Lightning.ai)
-- **Must verify on day 1 of Lightning training:** run `rasterio.open(img).read()` and check:
-  - If values in `[-30, 0]` → raw dB → need `10^(x/10)` conversion before inference
-  - If values in `[0, 1]` or `[0, 65535]` → already linear → skip conversion
-- Do NOT assume format until verified. The GEE preprocessing pipeline depends on this.
+- The Zenodo dataset docs state it outright (Part III record 13761290):
+  _"only the Sentinel-1 Sigma0 images in decibels (db) with two polarizations (VV, VH)…"_
+- So images are **Sigma0 in dB**, 2048×2048×2 (VV, VH). Confirm on real pixels with
+  `python src/data/inspect_oil_data.py --images_dir … --masks_dir …` (expect min < −5).
+- **Fix applied:** `loaders.py._load_image` now calls `sar_preprocess.preprocess_sar_bands`
+  (dB→linear → Lee → percentile-normalize) — the SAME function used at inference — so there
+  is **no train/serve skew**. Previously it min-max'd raw dB, which differed from the GEE path.
+- See memory note `zenodo-oil-images-db` for exact .7z filenames of all 3 parts.
 
 **Model pretraining (verified from architecture):**
 
@@ -637,6 +639,17 @@ A full read-through found and fixed these (all committed to `src/`):
 - **`albumentations` pinned `<2.0`** (2.x renamed the transform args used here).
 - Minor: detector `CLASS_NAMES` now single-class `["ship"]`; safe mAP print in train_detection;
   dashboard "Run Full Pipeline" button now gives honest feedback instead of a silent no-op.
+
+### Colab smoke test + data verification (2026-06-23)
+
+- `smoke_test.py` runs the whole training stack on tiny synthetic data via the real CLIs.
+  Reached **7/7 PASS** on Colab after fixing: `.gitignore` swallowing `src/data/` (unanchored
+  `data/` rule), the `grad-cam` PyPI name (was `pytorch-grad-cam` → aborted pip install),
+  and an int32→int64 mask cast in the oil loss. `requirements-train.txt` added (lean,
+  Colab/Lightning-friendly; full requirements pulls conflict-prone live-feed/app deps).
+- **Oil data confirmed dB** (see §4.5) → `loaders.py` now shares `sar_preprocess`'s pipeline.
+- `src/data/inspect_oil_data.py` = pre-flight inspector (format/mask/pairing) — run on a
+  sample before the full download/train.
 
 ### Logging, checkpoint layout & Hugging Face push (added 2026-06-23)
 

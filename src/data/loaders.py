@@ -15,6 +15,11 @@ import albumentations as A
 from albumentations.pytorch import ToTensorV2
 import rasterio
 
+# Reuse the EXACT inference preprocessing so training matches live/GEE data.
+# Zenodo oil images are Sigma0 in dB → this converts dB→linear, Lee-filters and
+# percentile-normalizes, identical to what sar_preprocess does at inference time.
+from .sar_preprocess import preprocess_sar_bands
+
 
 # ── Class definitions ──────────────────────────────────────────────────────────
 
@@ -156,14 +161,11 @@ class OilSpillDataset(Dataset):
         """Load SAR image as float32 H×W×C (1 or 2 channels → replicate to 3 for encoders)."""
         if path.suffix.lower() in {".tif", ".tiff"}:
             with rasterio.open(path) as src:
-                img = src.read().astype(np.float32)  # C×H×W
-            img = np.transpose(img, (1, 2, 0))       # H×W×C
-            # normalize each band to [0, 1]
-            for c in range(img.shape[2]):
-                band = img[:, :, c]
-                vmin, vmax = band.min(), band.max()
-                if vmax > vmin:
-                    img[:, :, c] = (band - vmin) / (vmax - vmin)
+                raw = src.read().astype(np.float32)  # C×H×W (dB Sigma0 for Zenodo)
+            # SAME pipeline as inference: per-band dB→linear (auto-detected), Lee speckle
+            # filter, percentile-clip + normalize to [0,1]. No train/serve skew.
+            proc = preprocess_sar_bands(raw)         # C×H×W float32 in [0,1]
+            img = np.transpose(proc, (1, 2, 0))      # H×W×C
             # replicate to 3 channels if needed
             if img.shape[2] == 1:
                 img = np.repeat(img, 3, axis=2)
@@ -171,7 +173,7 @@ class OilSpillDataset(Dataset):
                 img = np.concatenate([img, img[:, :, :1]], axis=2)
         else:
             img = np.array(Image.open(path).convert("RGB"), dtype=np.float32) / 255.0
-        return img  # H×W×3, float32
+        return img.astype(np.float32)  # H×W×3, float32
 
     def _load_mask(self, path: Path) -> np.ndarray:
         """Load mask as H×W int64 class indices."""
@@ -201,10 +203,10 @@ class OilSpillDataset(Dataset):
 
 
 def get_oil_transforms(img_size: int = 512, split: str = "train"):
-    # NOTE: _load_image() already min-max scales each band into [0, 1].
-    # Therefore Normalize must use max_pixel_value=1.0 (NOT the default 255.0),
-    # and GaussNoise variance must be on a [0, 1] scale — otherwise the image
-    # contrast collapses (~58x) and the noise swamps the signal.
+    # NOTE: _load_image() already returns bands in [0, 1] (via sar_preprocess:
+    # dB->linear, Lee, percentile-normalize). Therefore Normalize must use
+    # max_pixel_value=1.0 (NOT the default 255.0), and GaussNoise variance must be
+    # on a [0, 1] scale — otherwise contrast collapses (~58x) and noise swamps signal.
     IMAGENET_MEAN = [0.485, 0.456, 0.406]
     IMAGENET_STD  = [0.229, 0.224, 0.225]
     if split == "train":
