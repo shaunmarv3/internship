@@ -1,6 +1,7 @@
-data/
-checkpoints/
-smoke_data/
+# anchored to repo root with a leading slash so these do NOT also match src/data/ etc.
+/data/
+/checkpoints/
+/smoke_data/
 *.pt
 *.pth
 *.ckpt
