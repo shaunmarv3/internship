@@ -57,8 +57,9 @@ def main():
         print(f"!! No images/ dir at {img_dir}. Download a few .tif images there first.")
         sys.exit(0)
 
-    images = sorted(img_dir.glob("*.tif")) + sorted(img_dir.glob("*.tiff"))
-    masks_all = {p.stem: p for p in list(msk_dir.glob("*")) } if msk_dir.exists() else {}
+    # recursive — handles .tif nested in subfolders after .7z/.zip extraction
+    images = sorted(img_dir.rglob("*.tif")) + sorted(img_dir.rglob("*.tiff"))
+    masks_all = {p.stem: p for p in msk_dir.rglob("*") if p.is_file()} if msk_dir.exists() else {}
     print(f"images found : {len(images)}")
     print(f"masks found  : {len(masks_all)}")
     if not images:
