@@ -1,0 +1,16 @@
+data/
+checkpoints/
+*.pt
+*.pth
+*.ckpt
+wandb/
+__pycache__/
+*.pyc
+.env
+*.egg-info/
+dist/
+.ipynb_checkpoints/
+*.7z
+*.zip
+*.tif
+*.tiff

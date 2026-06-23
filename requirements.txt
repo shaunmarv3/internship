@@ -1,0 +1,62 @@
+# ── Core ────────────────────────────────────────────────────────────────────
+torch>=2.2.0
+torchvision>=0.17.0
+numpy>=1.24.0
+pandas>=2.0.0
+scikit-learn>=1.3.0
+
+# ── Computer Vision ──────────────────────────────────────────────────────────
+# OilSAM2 (SOTA June 2026) — install manually:
+#   git clone https://github.com/Chenshuaiyu1120/OILSAM2 && pip install -e OILSAM2
+#   wget https://dl.fbaipublicfiles.com/segment_anything_2/092824/sam2.1_hiera_large.pt
+sam2>=1.0                         # Meta SAM2 (OilSAM2 dependency)
+segmentation-models-pytorch>=0.3.3
+transformers>=4.40.0          # SegFormer (MiT backbone)
+ultralytics>=8.2.0            # YOLOv8/v11
+albumentations>=1.4.0
+opencv-python-headless>=4.9.0
+Pillow>=10.0.0
+
+# ── Geospatial ───────────────────────────────────────────────────────────────
+rasterio>=1.3.9
+geopandas>=0.14.0
+shapely>=2.0.0
+pyproj>=3.6.0
+fiona>=1.9.0
+
+# ── ML / Tabular ─────────────────────────────────────────────────────────────
+xgboost>=2.0.0
+
+# ── Explainability ───────────────────────────────────────────────────────────
+shap>=0.45.0
+pytorch-grad-cam>=1.5.0
+lime>=0.2.0
+
+# ── Oil Spill Drift ───────────────────────────────────────────────────────────
+opendrift>=1.11.0
+
+# ── Data feeds ───────────────────────────────────────────────────────────────
+requests>=2.31.0
+cdsapi>=0.7.0                 # ERA5 wind
+copernicusmarine>=1.3.0       # ocean currents
+earthengine-api>=0.1.400      # Sentinel-1 via GEE
+geemap>=0.31.0
+huggingface-hub>=0.23.0
+
+# ── App / Viz ─────────────────────────────────────────────────────────────────
+streamlit>=1.35.0
+streamlit-folium>=0.20.0
+folium>=0.16.0
+plotly>=5.22.0
+keplergl>=0.3.2
+matplotlib>=3.8.0
+seaborn>=0.13.0
+
+# ── Tracking ─────────────────────────────────────────────────────────────────
+wandb>=0.17.0
+
+# ── Utilities ────────────────────────────────────────────────────────────────
+tqdm>=4.66.0
+PyYAML>=6.0.1
+python-dotenv>=1.0.0
+scipy>=1.12.0
