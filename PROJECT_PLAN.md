@@ -572,26 +572,31 @@ plot · Model performance metrics table (Accuracy/Precision/Recall/F1/ROC-AUC).
 | `src/models/train_detection.py`       | ✅ Done | 3-model vessel detection benchmark: YOLOv8m / YOLOv11m-OBB / RT-DETR-L + OBB conversion from HRSID polygons                                                                                                                                                                                         |
 | `src/models/train_illegal_fishing.py` | ✅ Done | XGBoost + BiGRU training for M2                                                                                                                                                                                                                                                                     |
 | `src/models/drift_prediction.py`      | ✅ Done | OpenOil wrapper for M4                                                                                                                                                                                                                                                                              |
+| `src/data/sar_preprocess.py`          | ✅ Done | GEE live pipeline: format detect (dB vs linear) → Lee filter → normalize → chip 512×512. Two entry points: `preprocess_sar_tif(path)` for local TIF, `gee_to_chips(bbox, dates)` for live GEE pull. CLI: `python src/data/sar_preprocess.py chip scene.tif` |
 | `requirements.txt`                    | ✅ Done | All dependencies including `sam2>=1.0`, `streamlit-folium>=0.20.0`                                                                                                                                                                                                                                  |
 
 ### What is NOT done yet (pending)
 
-**Colab next session:**
-- [ ] Finish EEZ shapefile download (GDAL fix: `gdal.SetConfigOption("OGR_GEOJSON_MAX_OBJ_SIZE","0")`)
-- [ ] Download MPA shapefiles (`typeName=MarineRegions:high_seas_mpa`)
-- [ ] Run OBB label conversion: `python src/models/train_detection.py --convert_obb --coco_json /content/HRSID_JPG/annotations/train2017.json`
-- [ ] Download Zenodo Part I SAR images (40.7 GB) — use `wget` from Zenodo direct link
-- [ ] Train all 3 oil models (DeepLabv3+ → SegFormer → OilSAM2)
-- [ ] Train all 3 vessel models (YOLOv8m → YOLOv11m-OBB → RT-DETR-L)
-- [ ] Train M2 XGBoost on `/content/gfw_data/fishing_events_5k.csv`
+**Phase 0 complete as of 2026-06-23 ✅ — all prep done, ready for training:**
 
-**Code still missing:**
-- [ ] `src/data/sar_preprocess.py` — GEE live inference pipeline (Phase 6, write before Colab training day)
+Done this session:
+- ✅ EEZ shapefile — 285 zones, `/content/shapefiles/world_eez.gpkg`
+- ✅ High seas shapefile — 1 polygon, `/content/shapefiles/high_seas.gpkg`
+- ✅ MPA — embedded in GFW events (`regions.mpa`, `regions.mpaNoTake` columns)
+- ✅ HRSID OBB labels — 4,042 train / 1,962 val converted from COCO polygons via cv2.minAreaRect
+- ✅ OBB data.yaml — `/content/HRSID_obb/data.yaml` with 400 negatives included
+- ✅ `src/data/sar_preprocess.py` — GEE live pipeline written (dB detection + Lee filter + normalize + chip)
+- ✅ `src/fusion/ais_matching.py` — fixed GFW API calls (correct dataset names, offset=0 required)
+- ✅ `src/models/train_illegal_fishing.py` — `load_gfw_fishing_features()` added for GFW CSV format
 
-**Before training:**
+**Next Colab session (the big training run):**
+- [ ] Download Zenodo Part I SAR images (40.7 GB) from zenodo.org/records/8346860
+- [ ] Verify pixel format: `rasterio.open(first_img).read().min()` — if < -5 → dB, else linear
 - [ ] Install OilSAM2: `git clone https://github.com/Chenshuaiyu1120/OILSAM2 && pip install -e OILSAM2`
 - [ ] Download SAM2 checkpoint: `wget https://dl.fbaipublicfiles.com/segment_anything_2/092824/sam2.1_hiera_large.pt`
-- [ ] Verify SAR image pixel format (dB vs linear) on day 1: check `rasterio.open(img).read().min()` — if < -5 → dB format
+- [ ] Train oil models: DeepLabv3+ → SegFormer → OilSAM2
+- [ ] Train vessel models: YOLOv8m → YOLOv11m-OBB (use /content/HRSID_obb/data.yaml) → RT-DETR-L
+- [ ] Train M2 XGBoost: `python src/models/train_illegal_fishing.py --csv /content/gfw_data/fishing_events_5k.csv`
 
 ### Known bugs / fixes applied
 
