@@ -36,14 +36,21 @@ def classify(minv):
 def main():
     ap = argparse.ArgumentParser()
     ap.add_argument("--data_root", default="data/oil",
-                    help="folder with images/ and masks/ subdirs")
+                    help="folder with images/ and masks/ subdirs (convenience default)")
+    ap.add_argument("--images_dir", default=None,
+                    help="explicit image folder (overrides <data_root>/images) — "
+                         "use this to point at each Zenodo part separately")
+    ap.add_argument("--masks_dir", default=None,
+                    help="explicit mask folder (overrides <data_root>/masks; optional)")
+    ap.add_argument("--label", default=None, help="tag for the printout (e.g. 'Part I')")
     ap.add_argument("--n", type=int, default=8, help="how many samples to inspect")
     args = ap.parse_args()
 
     root = Path(args.data_root)
-    img_dir, msk_dir = root / "images", root / "masks"
+    img_dir = Path(args.images_dir) if args.images_dir else root / "images"
+    msk_dir = Path(args.masks_dir) if args.masks_dir else root / "masks"
     print("=" * 70)
-    print(f"  OIL DATA PRE-FLIGHT — {root}")
+    print(f"  OIL DATA PRE-FLIGHT — {args.label or img_dir}")
     print("=" * 70)
 
     if not img_dir.exists():
