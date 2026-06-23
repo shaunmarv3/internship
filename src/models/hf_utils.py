@@ -189,7 +189,7 @@ def init_wandb(project: str, name: str, config: dict = None,
         return None
     try:
         run = wandb.init(project=project, name=name, entity=entity,
-                         config=config or {}, reinit=True)
+                         config=config or {})
         log.info(f"W&B run live: {run.url}")
         return run
     except Exception as e:
