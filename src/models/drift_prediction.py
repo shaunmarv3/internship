@@ -100,9 +100,9 @@ def _synthetic_drift(lon: float, lat: float, hours: int = 48) -> pd.DataFrame:
 
 
 # ── LSTM (comparison exhibit, not load-bearing) ────────────────────────────────
-
-class DriftLSTM(torch.nn.Module if True else object):
-    pass
+# NOTE: the LSTM module is defined locally inside train_drift_lstm() so this file
+# imports cleanly without torch at module scope (torch is only needed for the LSTM
+# exhibit, not for the OpenOil physics path).
 
 
 def train_drift_lstm(

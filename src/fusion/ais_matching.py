@@ -16,6 +16,7 @@ import pandas as pd
 import geopandas as gpd
 from shapely.geometry import Point
 from datetime import datetime, timedelta
+from pathlib import Path
 from typing import List, Dict, Tuple
 import requests
 
@@ -134,8 +135,12 @@ def fetch_ais_around_scene(
     df["end"]   = pd.to_datetime(df["end"], utc=True)
     scene_ts    = pd.Timestamp(scene_time, tz="UTC")
 
-    # keep rows where gap overlaps the scene time window
-    mask = (df["start"] <= t_end.replace(tzinfo=None)) | (df["end"] >= t_start.replace(tzinfo=None))
+    # keep rows where the gap interval OVERLAPS the scene time window.
+    # Overlap = (start <= window_end) AND (end >= window_start). Using AND (not OR);
+    # OR would pass almost everything through.
+    w_start = pd.Timestamp(t_start, tz="UTC")
+    w_end   = pd.Timestamp(t_end,   tz="UTC")
+    mask = (df["start"] <= w_end) & (df["end"] >= w_start)
     df = df[mask].copy()
 
     # spatial filter: vessel went dark inside bbox

@@ -27,13 +27,13 @@ import argparse
 import os
 import sys
 import json
+import time
 from pathlib import Path
 
 import torch
 import torch.optim as optim
-from torch.cuda.amp import GradScaler, autocast
+from torch.amp import GradScaler, autocast
 from tqdm import tqdm
-import wandb
 
 sys.path.insert(0, str(Path(__file__).resolve().parents[2]))
 from src.data.loaders import (
@@ -41,6 +41,10 @@ from src.data.loaders import (
     compute_class_weights, OIL_CLASSES_5, OIL_CLASSES_BINARY,
 )
 from src.models.segmentation import build_segmentation_model, DiceFocalLoss, SegmentationMetrics
+from src.models.hf_utils import (
+    setup_logger, log_banner, gpu_info, fmt_eta, push_to_hub, add_hf_args,
+    init_wandb, add_wandb_args,
+)
 
 
 def parse_args():
@@ -54,9 +58,9 @@ def parse_args():
     p.add_argument("--batch_size",    type=int, default=8)
     p.add_argument("--lr",            type=float, default=6e-5)
     p.add_argument("--num_workers",   type=int, default=4)
-    p.add_argument("--checkpoint_dir", default="checkpoints")
-    p.add_argument("--wandb_project", default="maritime-oil-spill")
-    p.add_argument("--no_wandb",      action="store_true")
+    p.add_argument("--checkpoint_dir", default="checkpoints/oil")
+    add_wandb_args(p, default_project="maritime-oil-spill")
+    add_hf_args(p)
     return p.parse_args()
 
 
@@ -69,7 +73,7 @@ def train_epoch(model, loader, optimizer, criterion, scaler, device, metrics):
         images, masks = images.to(device), masks.to(device)
         optimizer.zero_grad()
 
-        with autocast():
+        with autocast(device_type=device.type, enabled=(device.type == "cuda")):
             logits = model(images)
             loss   = criterion(logits, masks)
 
@@ -91,7 +95,7 @@ def val_epoch(model, loader, criterion, device, metrics):
 
     for images, masks in tqdm(loader, desc="val  ", leave=False):
         images, masks = images.to(device), masks.to(device)
-        with autocast():
+        with autocast(device_type=device.type, enabled=(device.type == "cuda")):
             logits = model(images)
             loss   = criterion(logits, masks)
         total_loss += loss.item()
@@ -103,11 +107,24 @@ def val_epoch(model, loader, criterion, device, metrics):
 def main():
     args = parse_args()
     device = torch.device("cuda" if torch.cuda.is_available() else "cpu")
-    print(f"Device: {device}")
 
-    Path(args.checkpoint_dir).mkdir(parents=True, exist_ok=True)
+    ckpt_dir = Path(args.checkpoint_dir)
+    ckpt_dir.mkdir(parents=True, exist_ok=True)
+    logger = setup_logger("oil-train", logfile=str(ckpt_dir / f"train_{args.model}.log"))
+
+    log_banner(logger, f"M3 OIL SEGMENTATION — model='{args.model}'", {
+        "dataset_type": args.dataset_type,
+        "data_root":    args.data_root,
+        "img_size":     args.img_size,
+        "epochs":       args.epochs,
+        "batch_size":   args.batch_size,
+        "lr":           args.lr,
+        "checkpoint_dir": str(ckpt_dir),
+        **gpu_info(),
+    })
 
     # ── Dataloaders ──
+    logger.info("Building dataloaders (train/val are a disjoint deterministic split)...")
     train_loader, val_loader = get_oil_dataloaders(
         root=args.data_root,
         dataset_type=args.dataset_type,
@@ -117,13 +134,17 @@ def main():
     )
     num_classes = 5 if args.dataset_type == "krestenitis" else 2
     class_names = list(OIL_CLASSES_5.values()) if num_classes == 5 else list(OIL_CLASSES_BINARY.values())
+    logger.info(f"Train batches: {len(train_loader)} | Val batches: {len(val_loader)} | "
+                f"classes: {class_names}")
 
-    # ── Class weights (critical for 1.2% oil imbalance) ──
+    # ── Class weights (critical for ~1.8% oil imbalance) ──
+    logger.info("Scanning training masks for class weights (one-time)...")
     raw_train_ds = OilSpillDataset(
         args.data_root, split="train", dataset_type=args.dataset_type,
         transform=None, img_size=args.img_size,
     )
     weights = compute_class_weights(raw_train_ds, num_classes).to(device)
+    logger.info(f"Class weights: {weights.detach().cpu().numpy().round(3).tolist()}")
 
     # ── Model + loss + optim ──
     model = build_segmentation_model(
@@ -132,56 +153,101 @@ def main():
         backbone=args.backbone,
     ).to(device)
 
-    criterion = DiceFocalLoss(num_classes=num_classes, class_weights=weights)
+    # Honest naming: if oilsam2 silently fell back to SegFormer-b4, label it as such
+    # so checkpoints and the metrics table don't claim results OilSAM2 didn't produce.
+    model_tag = args.model
+    if args.model == "oilsam2" and getattr(model, "is_fallback", False):
+        model_tag = "oilsam2_fallback_segformer_b4"
+        logger.warning("OilSAM2 code unavailable — this run is SegFormer-b4. "
+                       f"Checkpoints/metrics tagged '{model_tag}'.")
+    n_params = sum(p.numel() for p in model.parameters()) / 1e6
+    logger.info(f"Model '{model_tag}' built — {n_params:.1f}M params")
+
+    criterion = DiceFocalLoss(num_classes=num_classes, class_weights=weights).to(device)
     optimizer = optim.AdamW(model.parameters(), lr=args.lr, weight_decay=1e-4)
     scheduler = optim.lr_scheduler.CosineAnnealingLR(optimizer, T_max=args.epochs)
-    scaler    = GradScaler()
+    scaler    = GradScaler(device.type, enabled=(device.type == "cuda"))
     metrics   = SegmentationMetrics(num_classes, class_names)
 
     # ── W&B ──
-    if not args.no_wandb:
-        wandb.init(project=args.wandb_project, config=vars(args))
+    run = init_wandb(args.wandb_project, model_tag,
+                     config={**vars(args), "model_tag": model_tag},
+                     entity=args.wandb_entity, enabled=not args.no_wandb, logger=logger)
 
     # ── Training loop ──
     best_oil_iou = 0.0
+    best_ckpt = ckpt_dir / f"best_{model_tag}.pt"
     history = []
+    t0 = time.time()
+    logger.info(f"Starting training for {args.epochs} epochs...")
 
     for epoch in range(1, args.epochs + 1):
+        ep_t0 = time.time()
         train_loss, train_m = train_epoch(model, train_loader, optimizer, criterion, scaler, device, metrics)
         val_loss,   val_m   = val_epoch(model, val_loader, criterion, device, metrics)
         scheduler.step()
 
         oil_iou = val_m.get("IoU_oil_spill", val_m.get("IoU_1", 0.0))
-        print(
-            f"Epoch {epoch:03d}/{args.epochs} | "
-            f"Train loss: {train_loss:.4f} | Val loss: {val_loss:.4f} | "
-            f"mIoU: {val_m['mIoU']:.4f} | Oil IoU: {oil_iou:.4f}"
+        ep_time = time.time() - ep_t0
+        eta = ep_time * (args.epochs - epoch)
+        cur_lr = optimizer.param_groups[0]["lr"]
+        is_best = oil_iou > best_oil_iou
+
+        logger.info(
+            f"Epoch {epoch:03d}/{args.epochs} | lr {cur_lr:.2e} | "
+            f"train {train_loss:.4f} | val {val_loss:.4f} | "
+            f"mIoU {val_m['mIoU']:.4f} | OilIoU {oil_iou:.4f}"
+            f"{'  ← best' if is_best else ''} | {ep_time:.0f}s/ep | ETA {fmt_eta(eta)}"
         )
 
-        log = {"epoch": epoch, "train_loss": train_loss, "val_loss": val_loss, **val_m}
+        log = {"epoch": epoch, "lr": cur_lr, "train_loss": train_loss,
+               "val_loss": val_loss, "epoch_sec": ep_time, **val_m}
         history.append(log)
-        if not args.no_wandb:
-            wandb.log(log)
+        if run is not None:
+            run.log(log)
 
-        # save best checkpoint
-        if oil_iou > best_oil_iou:
+        # save best checkpoint (on oil-class IoU)
+        if is_best:
             best_oil_iou = oil_iou
-            ckpt_path = Path(args.checkpoint_dir) / f"best_{args.model}.pt"
             torch.save({
                 "epoch": epoch,
                 "model_state": model.state_dict(),
                 "optimizer_state": optimizer.state_dict(),
                 "oil_iou": oil_iou,
                 "miou": val_m["mIoU"],
+                "model_tag": model_tag,
                 "args": vars(args),
-            }, ckpt_path)
-            print(f"  ✓ Saved best checkpoint (Oil IoU: {oil_iou:.4f}) → {ckpt_path}")
+            }, best_ckpt)
+            logger.info(f"  ✓ Saved best checkpoint (OilIoU {oil_iou:.4f}) → {best_ckpt}")
 
-    print(f"\nTraining complete. Best Oil IoU: {best_oil_iou:.4f} | Baseline target: 0.54")
-    with open(Path(args.checkpoint_dir) / "history.json", "w") as f:
+    # ── Persist history + run summary ──
+    hist_path = ckpt_dir / f"history_{model_tag}.json"
+    with open(hist_path, "w", encoding="utf-8") as f:
         json.dump(history, f, indent=2)
-    if not args.no_wandb:
-        wandb.finish()
+    summary = {"model_tag": model_tag, "best_oil_iou": round(best_oil_iou, 4),
+               "epochs": args.epochs, "total_seconds": round(time.time() - t0, 1),
+               "best_checkpoint": str(best_ckpt), "baseline_target": 0.54}
+    with open(ckpt_dir / f"summary_{model_tag}.json", "w", encoding="utf-8") as f:
+        json.dump(summary, f, indent=2)
+
+    log_banner(logger, "TRAINING COMPLETE", {
+        "best Oil IoU":  f"{best_oil_iou:.4f}  (baseline target 0.54)",
+        "total time":    fmt_eta(time.time() - t0),
+        "checkpoint":    str(best_ckpt),
+        "history":       str(hist_path),
+    })
+    if run is not None:
+        run.log({"best_oil_iou": best_oil_iou})
+        run.finish()
+
+    # ── Push to Hugging Face Hub (oil/ subfolder) ──
+    if args.push_hf:
+        logger.info(f"Pushing oil artifacts to HF repo '{args.hf_repo}' (subfolder: oil)...")
+        for p in [best_ckpt, hist_path, ckpt_dir / f"summary_{model_tag}.json"]:
+            push_to_hub(str(p), path_in_repo="oil", repo_id=args.hf_repo,
+                        token=args.hf_token, private=not args.hf_public,
+                        commit_message=f"oil/{model_tag}: OilIoU={best_oil_iou:.4f}",
+                        logger=logger)
 
 
 if __name__ == "__main__":

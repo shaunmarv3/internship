@@ -16,6 +16,7 @@ Target: fishing.potentialRisk (True/False, pre-labeled by GFW)
 
 import sys
 import json
+import time
 import argparse
 import numpy as np
 import pandas as pd
@@ -30,6 +31,9 @@ import joblib
 
 sys.path.insert(0, str(Path(__file__).resolve().parents[2]))
 from src.explain.shap_explain import explain_xgboost, get_top_factors
+from src.models.hf_utils import (
+    setup_logger, log_banner, push_to_hub, add_hf_args, init_wandb, add_wandb_args,
+)
 
 
 # ── GFW data loader ───────────────────────────────────────────────────────────
@@ -89,6 +93,14 @@ def load_gfw_fishing_features(csv_path: str) -> Tuple[pd.DataFrame, pd.Series]:
 
     print(f"[load_gfw_fishing_features] {len(X)} samples | "
           f"risk={y.sum()} ({100*y.mean():.1f}%) | features={X.columns.tolist()}")
+    # ⚠️ LEAKAGE CAVEAT: GFW's `potentialRisk` label is itself partly derived from
+    # authorization status and zone — which are also fed in as features (auth_status,
+    # in_mpa, in_high_seas). High AUC here may reflect the model re-learning GFW's own
+    # rule rather than independent signal. Report this honestly; if you want a cleaner
+    # test of learned behaviour, drop `auth_status` and re-evaluate.
+    if 100 * y.mean() < 2 or 100 * y.mean() > 98:
+        print("  ⚠️ Highly imbalanced/near-degenerate label — metrics will be fragile; "
+              "verify the event pull before trusting results.")
     return X, y
 
 
@@ -149,55 +161,115 @@ def engineer_features(ais_df: pd.DataFrame) -> pd.DataFrame:
 
 def train_fishing_classifier(
     feats: pd.DataFrame,
-    labels: pd.Series,          # 1 = fishing (legal or illegal) / 0 = non-fishing
-    save_path: str = "checkpoints/fishing_xgb.json",
-    shap_plot_path: str = "checkpoints/shap_fishing.png",
+    labels: pd.Series,          # 1 = potentialRisk / 0 = no risk (GFW label)
+    save_path: str = "checkpoints/fishing/fishing_xgb.json",
+    shap_plot_path: str = "checkpoints/fishing/shap_fishing.png",
+    logger=None,
+    wandb_run=None,             # optional active W&B run for live + final logging
 ):
+    log = logger or setup_logger("fishing-train")
     X = feats.drop(columns=["mmsi"], errors="ignore")
     y = labels
+
+    # ── guard against degenerate labels (GFW potentialRisk can be all-one-class) ──
+    if y.nunique() < 2:
+        raise ValueError(
+            f"Target has a single class (value={y.unique().tolist()}, "
+            f"positives={int(y.sum())}/{len(y)}). The downloaded GFW events are not "
+            "usable for binary classification — pull a more balanced set or change the target."
+        )
 
     X_train, X_test, y_train, y_test = train_test_split(
         X, y, test_size=0.2, random_state=42, stratify=y
     )
 
-    scale_pos_weight = (y_train == 0).sum() / (y_train == 1).sum()
+    n_pos = int((y_train == 1).sum())
+    n_neg = int((y_train == 0).sum())
+    scale_pos_weight = (n_neg / n_pos) if n_pos > 0 else 1.0
+    log_banner(log, "M2 ILLEGAL FISHING — XGBoost", {
+        "train rows":       len(X_train),
+        "test rows":        len(X_test),
+        "features":         X.shape[1],
+        "train pos/neg":    f"{n_pos}/{n_neg}",
+        "scale_pos_weight": round(scale_pos_weight, 3),
+        "feature names":    X.columns.tolist(),
+    })
+
+    # Optional: log per-round aucpr to W&B via xgboost's native callback.
+    xgb_callbacks = []
+    if wandb_run is not None:
+        try:
+            from wandb.integration.xgboost import WandbCallback
+            xgb_callbacks.append(WandbCallback(log_model=False))
+            log.info("W&B XGBoost callback attached (per-round metrics will stream).")
+        except Exception as e:
+            log.warning(f"W&B xgboost callback unavailable: {e}")
+
+    # XGBoost >= 2.0: early_stopping_rounds is a CONSTRUCTOR arg (removed from fit());
+    # use_label_encoder was removed entirely.
     model = xgb.XGBClassifier(
         n_estimators=500,
         max_depth=6,
         learning_rate=0.05,
         scale_pos_weight=scale_pos_weight,
-        use_label_encoder=False,
         eval_metric="aucpr",
+        early_stopping_rounds=30,
+        callbacks=xgb_callbacks or None,
         random_state=42,
         n_jobs=-1,
     )
+    t0 = time.time()
     model.fit(
         X_train, y_train,
         eval_set=[(X_test, y_test)],
-        early_stopping_rounds=30,
         verbose=50,
     )
+    log.info(f"Fit complete in {time.time() - t0:.1f}s "
+             f"(best_iteration={getattr(model, 'best_iteration', 'n/a')})")
 
     preds   = model.predict(X_test)
     probs   = model.predict_proba(X_test)[:, 1]
     p, r, f, _ = precision_recall_fscore_support(y_test, preds, average="binary")
     auc = roc_auc_score(y_test, probs)
 
-    print(f"\nFishing Classifier Results:")
-    print(f"  Precision: {p:.4f} | Recall: {r:.4f} | F1: {f:.4f} | ROC-AUC: {auc:.4f}")
-    print(classification_report(y_test, preds))
+    log_banner(log, "RESULTS", {
+        "Precision": f"{p:.4f}", "Recall": f"{r:.4f}",
+        "F1": f"{f:.4f}", "ROC-AUC": f"{auc:.4f}",
+    })
+    log.info("\n" + classification_report(y_test, preds))
 
-    Path(save_path).parent.mkdir(parents=True, exist_ok=True)
-    model.save_model(save_path)
-    print(f"Model saved → {save_path}")
+    save_path = Path(save_path)
+    save_path.parent.mkdir(parents=True, exist_ok=True)
+    model.save_model(str(save_path))
+    log.info(f"✓ Model saved → {save_path}")
 
     # SHAP
     shap_vals = explain_xgboost(model, X_test, feature_names=X.columns.tolist(),
-                                 save_path=shap_plot_path)
+                                 save_path=str(shap_plot_path))
     top = get_top_factors(shap_vals, X.columns.tolist(), top_n=5)
-    print("\nTop SHAP factors:", json.dumps(top, indent=2))
+    log.info(f"✓ SHAP plot → {shap_plot_path}")
+    log.info(f"Top SHAP factors (%): {json.dumps(top)}")
 
-    return model, {"precision": p, "recall": r, "f1": f, "roc_auc": auc, "shap_factors": top}
+    metrics = {"precision": p, "recall": r, "f1": f, "roc_auc": auc, "shap_factors": top}
+    metrics_path = save_path.parent / "metrics.json"
+    with open(metrics_path, "w", encoding="utf-8") as fp:
+        json.dump({k: (round(v, 4) if isinstance(v, float) else v)
+                   for k, v in metrics.items()}, fp, indent=2)
+    log.info(f"✓ Metrics → {metrics_path}")
+
+    # ── W&B: log final metrics + SHAP plot + feature-importance table ──
+    if wandb_run is not None:
+        try:
+            import wandb
+            wandb_run.log({"precision": p, "recall": r, "f1": f, "roc_auc": auc})
+            if Path(shap_plot_path).exists():
+                wandb_run.log({"shap_summary": wandb.Image(str(shap_plot_path))})
+            tbl = wandb.Table(columns=["feature", "shap_pct"],
+                              data=[[k, v] for k, v in top.items()])
+            wandb_run.log({"top_shap_factors": tbl})
+        except Exception as e:
+            log.warning(f"W&B logging skipped: {e}")
+    return model, metrics
 
 
 # ── CLI ────────────────────────────────────────────────────────────────────────
@@ -206,14 +278,30 @@ if __name__ == "__main__":
     parser = argparse.ArgumentParser()
     parser.add_argument("--csv",      default="data/gfw/fishing_events_5k.csv",
                         help="Path to GFW fishing events CSV")
-    parser.add_argument("--out",      default="checkpoints/fishing_xgb.json")
-    parser.add_argument("--shap_out", default="checkpoints/shap_fishing.png")
+    parser.add_argument("--out",      default="checkpoints/fishing/fishing_xgb.json")
+    parser.add_argument("--shap_out", default="checkpoints/fishing/shap_fishing.png")
+    add_wandb_args(parser, default_project="maritime-fishing")
+    add_hf_args(parser)
     args = parser.parse_args()
 
-    print(f"Loading GFW fishing events from {args.csv}")
+    logger = setup_logger("fishing-train",
+                          logfile=str(Path(args.out).parent / "train_fishing.log"))
+    logger.info(f"Loading GFW fishing events from {args.csv}")
     X, y = load_gfw_fishing_features(args.csv)
-    model, metrics = train_fishing_classifier(X, y, args.out, args.shap_out)
-    print("\nFinal metrics:", json.dumps(
-        {k: round(v, 4) if isinstance(v, float) else v for k, v in metrics.items()
-         if k != "shap_factors"}, indent=2
-    ))
+
+    run = init_wandb(args.wandb_project, "fishing_xgb",
+                     config={"csv": args.csv, "n_samples": len(X), "n_features": X.shape[1],
+                             "pos_rate": float(y.mean())},
+                     entity=args.wandb_entity, enabled=not args.no_wandb, logger=logger)
+    model, metrics = train_fishing_classifier(X, y, args.out, args.shap_out,
+                                              logger=logger, wandb_run=run)
+    if run is not None:
+        run.finish()
+
+    if args.push_hf:
+        out_dir = Path(args.out).parent          # checkpoints/fishing/
+        logger.info(f"Pushing fishing artifacts to HF '{args.hf_repo}' (subfolder: fishing)...")
+        push_to_hub(str(out_dir), path_in_repo="fishing", repo_id=args.hf_repo,
+                    token=args.hf_token, private=not args.hf_public,
+                    commit_message=f"fishing: F1={metrics['f1']:.4f} AUC={metrics['roc_auc']:.4f}",
+                    logger=logger)

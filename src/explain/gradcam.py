@@ -44,7 +44,9 @@ def generate_gradcam(
     target_class: 1=oil_spill, 2=look_alike, 3=ship, 4=land (Krestenitis)
     """
     target_layers = get_target_layer(model, model_type)
-    cam = GradCAM(model=model, target_layers=target_layers, use_cuda=image_tensor.is_cuda)
+    # pytorch-grad-cam >= 1.5 removed the `use_cuda` arg — device is inferred from the
+    # model. Ensure the model and input are on the same device before constructing.
+    cam = GradCAM(model=model, target_layers=target_layers)
     targets = segmentation_target(target_class)
 
     grayscale_cam = cam(

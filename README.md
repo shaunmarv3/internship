@@ -28,16 +28,16 @@ segment **oil spills**, predict **spill drift**, and roll it all into an interpr
 
 | Need | Dataset | Access |
 |------|---------|--------|
-| Oil masks (5-class) | **Krestenitis / M4D** (~400 MB) | request: [m4d.iti.gr](https://m4d.iti.gr/oil-spill-detection-dataset/) |
-| Oil masks (instant) | **Zenodo 8346860** (binary, 47 GB) | [direct download](https://zenodo.org/records/8346860) |
-| SAR vessels | **SARFishSample** → GRD subset | [HuggingFace](https://huggingface.co/datasets/ConnorLuckettDSTG/SARFish) |
-| SAR vessels (benchmark) | **xView3-SAR** | [iuu.xview.us](https://iuu.xview.us/) |
-| AIS tracks + labels | **Global Fishing Watch** API, `marinecadastre.gov` | free token |
-| Zones | **EEZ** (marineregions.org), **MPA/WDPA** (protectedplanet.net) | free |
+| Oil masks (M3, **primary**) | **Zenodo 8346860** (binary, ~47 GB) | [direct download](https://zenodo.org/records/8346860) |
+| ~~Oil masks (5-class)~~ | ~~Krestenitis / M4D~~ — **dropped** (gated; Zenodo binary is sufficient) | — |
+| SAR vessels (M1, **primary**) | **HRSID** (5,604 imgs, single-class) | Google Drive (see `PROJECT_PLAN.md` §4.5) |
+| SAR vessels (optional benchmark) | **xView3-SAR** | [iuu.xview.us](https://iuu.xview.us/) |
+| AIS / fishing / gap events | **Global Fishing Watch** `/v3/events` API | free token |
+| Zones | **EEZ** + **high seas** (marineregions.org, SHAPE-ZIP); MPA via GFW `regions.mpa` | free |
 | Ocean currents/wind | **Copernicus Marine** + **ERA5** | free API |
 
-> ⚠️ Never clone the full xView3/SARFish (TB-scale). Pull GRD-only subsets:
-> `snapshot_download(repo_id="ConnorLuckettDSTG/SARFish", repo_type="dataset", allow_patterns=["*GRD*"])`
+> See `PROJECT_PLAN.md` for the full dataset rationale, including why SARFishSample,
+> LS-SSDD, SSDD and SAR-Ship-Dataset were dropped in favour of HRSID.
 
 ---
 
@@ -119,18 +119,17 @@ Ultralytics YOLO · XGBoost · scikit-learn · albumentations
 python -m venv .venv && source .venv/bin/activate      # (Windows: .venv\Scripts\activate)
 pip install -r requirements.txt
 
-# 2. Get the unblocking dataset (oil, instant)
-#    → download Zenodo record 8346860 into data/oil/
-#    → or request Krestenitis 5-class at m4d.iti.gr
+# 2. Get the oil dataset (M3 floor)
+#    → download Zenodo record 8346860 into data/oil/  (images/ + masks/)
 
-# 3. Learn the vessel format (8 GB sample)
-git lfs install
-git clone https://huggingface.co/datasets/ConnorLuckettDSTG/SARFishSample data/vessels/sample
+# 3. Get the vessel dataset (M1)
+#    → download HRSID (Google Drive links + COCO→YOLO/OBB conversion: PROJECT_PLAN.md §4.5)
 
-# 4. Start with Phase 1
-jupyter notebook notebooks/03_oil_spill_seg.ipynb
+# 4. Train the floor first (Phase 1 — oil segmentation)
+python src/models/train_segmentation.py --model deeplabv3+ --epochs 50 \
+       --batch_size 16 --dataset_type zenodo --data_root data/oil
 
-# 5. Run the dashboard (once modules produce outputs)
+# 5. Run the dashboard (works now on demo data; live wiring is pending)
 streamlit run app/dashboard.py
 ```
 

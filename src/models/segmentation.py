@@ -30,7 +30,11 @@ class DiceFocalLoss(nn.Module):
         self.focal_gamma = focal_gamma
         self.dice_w = dice_weight
         self.focal_w = focal_weight
-        self.ce = nn.CrossEntropyLoss(weight=class_weights, ignore_index=255)
+        # register so weights move with .to(device) and are actually applied below
+        if class_weights is not None:
+            self.register_buffer("class_weights", class_weights)
+        else:
+            self.class_weights = None
 
     def forward(self, logits: torch.Tensor, targets: torch.Tensor):
         # logits: B×C×H×W  |  targets: B×H×W
@@ -39,7 +43,9 @@ class DiceFocalLoss(nn.Module):
         return self.focal_w * focal + self.dice_w * dice
 
     def _focal(self, logits, targets):
-        ce_loss = F.cross_entropy(logits, targets, ignore_index=255, reduction="none")
+        # class_weights ARE applied here — focal alone is not enough at ~1.8% oil
+        ce_loss = F.cross_entropy(logits, targets, weight=self.class_weights,
+                                  ignore_index=255, reduction="none")
         pt = torch.exp(-ce_loss)
         return ((1 - pt) ** self.focal_gamma * ce_loss).mean()
 
@@ -176,6 +182,11 @@ class OilSAM2Model(nn.Module):
         wget https://dl.fbaipublicfiles.com/segment_anything_2/092824/sam2.1_hiera_large.pt
 
     Falls back to SegFormer-b4 if OILSAM2 is not installed (so training loop never breaks).
+
+    ⚠️ As of 2026-06-23 the OILSAM2 code is NOT publicly released — the paper exists
+    (arXiv 2603.10231) but github.com/Chenshuaiyu1120/OILSAM2 returns 404. So in practice
+    this ALWAYS falls back to SegFormer-b4. Treat any "oilsam2" result as SegFormer-b4 and
+    report it honestly (see `effective_name`). Re-check the repo periodically for a release.
     """
 
     def __init__(self, num_classes: int = 2, sam2_checkpoint: str = "sam2.1_hiera_large.pt",
@@ -193,10 +204,20 @@ class OilSAM2Model(nn.Module):
             )
             print("[OilSAM2] Loaded from OILSAM2 repo.")
         except ImportError:
-            print("[OilSAM2] OILSAM2 not installed — falling back to SegFormer-b4.")
-            print("  To install: git clone https://github.com/Chenshuaiyu1120/OILSAM2 && pip install -e OILSAM2")
+            print("[OilSAM2] OILSAM2 code unavailable (repo not released as of 2026-06) "
+                  "— falling back to SegFormer-b4.")
+            print("  Results under this model are SegFormer-b4, NOT OilSAM2 — label accordingly.")
             self.model = SegFormerModel(backbone="b4", num_classes=num_classes)
             self._using_fallback = True
+
+    @property
+    def is_fallback(self) -> bool:
+        return self._using_fallback
+
+    @property
+    def effective_name(self) -> str:
+        """Honest name for checkpoints / metrics tables."""
+        return "segformer_b4" if self._using_fallback else "oilsam2"
 
     def forward(self, x: torch.Tensor) -> torch.Tensor:
         if self._using_fallback:

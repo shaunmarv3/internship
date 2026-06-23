@@ -407,11 +407,17 @@ snapshot_download(
 | 2   | SegFormer MiT-b2     | ~67%        | ~60 min           | Mid comparison   |
 | 3   | **OilSAM2**          | **~72%+**   | ~90 min           | **SOTA primary** |
 
-- **OilSAM2** (arxiv 2603.10231, March 2026) — current SOTA for SAR oil spill segmentation.
+- **OilSAM2** (arxiv 2603.10231, March 2026) — claimed SOTA for SAR oil spill segmentation.
   Extends Meta's SAM2 with: (1) hierarchical memory bank at texture/structure/semantic levels,
   (2) scale-adaptive fusion module, (3) structure-semantic consistent memory updates.
-  Achieves **72.62% mIoU on M4D**, beats all CNN + transformer + SAM baselines.
-  Code: https://github.com/Chenshuaiyu1120/OILSAM2 ← clone this into src/models/
+  Paper reports **72.62% mIoU**.
+  - ⚠️ **CODE NOT RELEASED (verified 2026-06-23):** the paper is real but
+    `github.com/Chenshuaiyu1120/OILSAM2` returns **404**, and the author's only oil repo
+    (`Chenshuaiyu1120/Oil-Spill-detection`) is a placeholder for a *different* paper (OSDMamba).
+  - Consequence: `OilSAM2Model` **silently falls back to SegFormer-b4**. Any `--model oilsam2`
+    run is really SegFormer-b4 and is now tagged `oilsam2_fallback_segformer_b4` in checkpoints
+    and W&B. **Do not report a 72% OilSAM2 number.** The honest M3 benchmark is
+    DeepLabv3+ → SegFormer-b2 → SegFormer-b4. Re-check the repo periodically for a release.
 
 - **🔑 THE critical lever — class imbalance (confirmed from data):**
   - Zenodo dataset: median oil = **1.76%**, mean 2.98%, min 0.12%, max 57.37%
@@ -606,6 +612,80 @@ Done this session:
   unused in this project — ignore them.
 - **OilSAM2 graceful fallback:** `OilSAM2Model` catches `ImportError` and falls back to
   SegFormer-b4 so the training loop never crashes on a machine without OILSAM2 installed.
+
+### Code-review fixes applied (2026-06-23)
+
+A full read-through found and fixed these (all committed to `src/`):
+
+- **M3 train==val leakage (critical):** `_collect_zenodo()` ignored `split` → train and val
+  loaded the *same* images. Now does a deterministic, disjoint 85/15 partition (seed=42).
+  M3 metrics before this fix were training accuracy, not validation.
+- **M3 double-normalization (critical):** images are min-maxed to [0,1] in the loader, but
+  `A.Normalize` used the default `max_pixel_value=255` (≈58× contrast collapse) and
+  `A.GaussNoise` used a [0,255]-scale variance. Both fixed to the [0,1] scale.
+- **`DiceFocalLoss` ignored class weights** (built `self.ce` but never used it). Focal CE now
+  applies the weights; weights are a registered buffer so they move with `.to(device)`.
+- **M4 `drift_prediction.py` failed to import** (`class DriftLSTM(torch.nn.Module …)` with
+  `torch` not imported at module scope). Stray class removed.
+- **M2 XGBoost 2.x break:** `early_stopping_rounds` moved to the constructor; `use_label_encoder`
+  removed; added a degenerate-label guard and div-by-zero guard on `scale_pos_weight`.
+  Also documented the `potentialRisk` label-leakage caveat.
+- **`ais_matching.py`:** missing `from pathlib import Path`; interval-overlap filter was an OR
+  (passed almost everything) → now AND, tz-aware.
+- **`gradcam.py`:** removed the `use_cuda` arg (removed in pytorch-grad-cam ≥1.5).
+- **AMP:** `torch.cuda.amp` → `torch.amp` (CPU-safe, no deprecation warnings).
+- **`albumentations` pinned `<2.0`** (2.x renamed the transform args used here).
+- Minor: detector `CLASS_NAMES` now single-class `["ship"]`; safe mAP print in train_detection;
+  dashboard "Run Full Pipeline" button now gives honest feedback instead of a silent no-op.
+
+### Logging, checkpoint layout & Hugging Face push (added 2026-06-23)
+
+All three training scripts now use a shared `src/models/hf_utils.py` for:
+- **Verbose logging** — timestamped console + file logs (`<ckpt_dir>/*.log`), a config
+  banner (model, dataset, batch, lr, device + GPU name/VRAM), dataset sizes, class
+  weights, per-epoch lines (lr, train/val loss, mIoU, oil-IoU, secs/epoch, **ETA**,
+  best marker), and a final summary banner. Console is UTF-8-safe on Windows cp1252.
+- **Organized checkpoints** (no more flat `checkpoints/`):
+  ```
+  checkpoints/
+    oil/      best_<tag>.pt, history_<tag>.json, summary_<tag>.json, train_<model>.log
+    vessel/   <run_name>/weights/best.pt, results.csv  (Ultralytics layout)
+    fishing/  fishing_xgb.json, shap_fishing.png, metrics.json, train_fishing.log
+  ```
+- **Hugging Face push** to ONE private repo `shaunmarvell/maritime-security-intelligence`
+  with subfolders `oil/`, `vessel/`, `fishing/`. Opt-in via `--push_hf`.
+- **Weights & Biases** on all three scripts: segmentation logs per-epoch loss/mIoU/oil-IoU;
+  detection uses Ultralytics' native W&B integration (loss/mAP curves, PR/confusion plots);
+  fishing streams per-round AUCPR + logs the SHAP plot and feature-importance table.
+  Flags: `--wandb_project`, `--wandb_entity`, `--no_wandb`. A missing/unauthenticated W&B
+  never blocks training (it warns and continues).
+
+**Platform:** all training runs on **Lightning.ai** (Studio with GPU + persistent disk).
+Checkpoint paths are relative, so nothing is platform-specific.
+
+**Auth (run once per Lightning Studio):**
+- HF: `from huggingface_hub import login; login()` (WRITE token), or `export HF_TOKEN=hf_xxx`.
+- W&B: `wandb login` (or `export WANDB_API_KEY=...`; or `export WANDB_MODE=offline` to log locally).
+Push failures never crash a finished run (checkpoint stays on disk); re-push later with
+`python src/models/push_to_hf.py`.
+
+**Training + push commands:**
+```bash
+# M3 oil (repeat for segformer / oilsam2):
+python src/models/train_segmentation.py --model deeplabv3+ --dataset_type zenodo \
+       --data_root data/oil --epochs 50 --batch_size 16 --push_hf
+
+# M1 vessels:
+python src/models/train_detection.py --model yolov8m \
+       --data /content/HRSID_yolo/data.yaml --push_hf
+
+# M2 fishing:
+python src/models/train_illegal_fishing.py --csv /content/gfw_data/fishing_events_5k.csv --push_hf
+
+# Manual push of anything trained earlier:
+python src/models/push_to_hf.py checkpoints/oil --subfolder oil
+```
+Default repo is private; add `--hf_public` to override.
 
 ### Training run order on Lightning.ai H100
 

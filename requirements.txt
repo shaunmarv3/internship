@@ -1,62 +1,81 @@
-# ── Core ────────────────────────────────────────────────────────────────────
+# Maritime Security Intelligence — Python dependencies
+# Target: Lightning.ai Studio (Python 3.10–3.12). Tested install path for TRAINING.
+# If the Studio already ships torch+CUDA, you may skip the torch/torchvision lines.
+#
+#   pip install -r requirements.txt
+#
+# A few heavy/fragile or not-yet-needed packages are intentionally commented out at
+# the bottom (sam2, opendrift, keplergl) so a clean install never fails — install
+# those only on the Studio/module that needs them.
+
+# ── Core ─────────────────────────────────────────────────────────────────────
 torch>=2.2.0
 torchvision>=0.17.0
 numpy>=1.24.0
 pandas>=2.0.0
 scikit-learn>=1.3.0
+scipy>=1.12.0
 
-# ── Computer Vision ──────────────────────────────────────────────────────────
-# OilSAM2 (SOTA June 2026) — install manually:
-#   git clone https://github.com/Chenshuaiyu1120/OILSAM2 && pip install -e OILSAM2
-#   wget https://dl.fbaipublicfiles.com/segment_anything_2/092824/sam2.1_hiera_large.pt
-sam2>=1.0                         # Meta SAM2 (OilSAM2 dependency)
+# ── Computer Vision (M1 detection, M3 segmentation) ──────────────────────────
 segmentation-models-pytorch>=0.3.3
 transformers>=4.40.0          # SegFormer (MiT backbone)
-ultralytics>=8.2.0            # YOLOv8/v11
-albumentations>=1.4.0
+ultralytics>=8.2.0            # YOLOv8/v11/RT-DETR
+albumentations>=1.4.0,<2.0    # 2.x renamed RandomResizedCrop/GaussNoise args used here
 opencv-python-headless>=4.9.0
 Pillow>=10.0.0
 
-# ── Geospatial ───────────────────────────────────────────────────────────────
+# ── Geospatial (SAR I/O, fusion, zones) ──────────────────────────────────────
 rasterio>=1.3.9
 geopandas>=0.14.0
 shapely>=2.0.0
 pyproj>=3.6.0
 fiona>=1.9.0
 
-# ── ML / Tabular ─────────────────────────────────────────────────────────────
+# ── ML / Tabular (M2 fishing) ────────────────────────────────────────────────
 xgboost>=2.0.0
+joblib>=1.3.0                 # used by train_illegal_fishing (explicit; also a sklearn dep)
 
-# ── Explainability ───────────────────────────────────────────────────────────
+# ── Explainability (M5) ──────────────────────────────────────────────────────
 shap>=0.45.0
 pytorch-grad-cam>=1.5.0
 lime>=0.2.0
 
-# ── Oil Spill Drift ───────────────────────────────────────────────────────────
-opendrift>=1.11.0
+# ── Experiment tracking + model hosting ──────────────────────────────────────
+wandb>=0.17.0                 # used by all three training scripts
+huggingface-hub>=0.23.0       # push trained checkpoints to the Hub
 
-# ── Data feeds ───────────────────────────────────────────────────────────────
+# ── Live data feeds (only needed for the live/GEE demo, not for training) ────
 requests>=2.31.0
-cdsapi>=0.7.0                 # ERA5 wind
-copernicusmarine>=1.3.0       # ocean currents
+cdsapi>=0.7.0                 # ERA5 wind (M4)
+copernicusmarine>=1.3.0       # ocean currents (M4)
 earthengine-api>=0.1.400      # Sentinel-1 via GEE
 geemap>=0.31.0
-huggingface-hub>=0.23.0
 
-# ── App / Viz ─────────────────────────────────────────────────────────────────
+# ── App / Viz (dashboard) ────────────────────────────────────────────────────
 streamlit>=1.35.0
 streamlit-folium>=0.20.0
 folium>=0.16.0
 plotly>=5.22.0
-keplergl>=0.3.2
 matplotlib>=3.8.0
 seaborn>=0.13.0
-
-# ── Tracking ─────────────────────────────────────────────────────────────────
-wandb>=0.17.0
 
 # ── Utilities ────────────────────────────────────────────────────────────────
 tqdm>=4.66.0
 PyYAML>=6.0.1
 python-dotenv>=1.0.0
-scipy>=1.12.0
+
+# ─────────────────────────────────────────────────────────────────────────────
+# OPTIONAL / install-on-demand (left out of the hard requirements so a plain
+# `pip install -r requirements.txt` can't fail on them):
+#
+#   # M4 drift — heavy cartopy/netCDF stack; drift_prediction.py has a synthetic
+#   # fallback if absent. Install only on the Studio where you run M4:
+#   pip install "opendrift>=1.11.0"
+#
+#   # Meta SAM2 — NOT on PyPI as a stable `sam2` wheel, and NOT needed while OilSAM2
+#   # falls back to SegFormer-b4. Install from source only if OilSAM2 is released:
+#   pip install "git+https://github.com/facebookresearch/sam2.git"
+#
+#   # kepler.gl maps — not currently imported by the app; install if you add it:
+#   pip install "keplergl>=0.3.2"
+# ─────────────────────────────────────────────────────────────────────────────

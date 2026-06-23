@@ -82,11 +82,11 @@ with st.sidebar:
         color = "green" if exists else "red"
         st.markdown(f":{color}[{icon} {label}]")
 
-    data_badge("checkpoints/best_segformer.pt",  "Oil model trained")
-    data_badge("checkpoints/fishing_xgb.json",   "Fishing classifier")
-    data_badge("data/oil",                        "Oil dataset")
-    data_badge("data/vessels",                    "Vessel dataset")
-    data_badge("checkpoints/drift_output.csv",    "Drift simulation")
+    data_badge("checkpoints/oil/best_segformer.pt",     "Oil model trained")
+    data_badge("checkpoints/fishing/fishing_xgb.json",  "Fishing classifier")
+    data_badge("data/oil",                               "Oil dataset")
+    data_badge("data/vessels",                           "Vessel dataset")
+    data_badge("checkpoints/drift_output.csv",           "Drift simulation")
 
     st.markdown("---")
     run_pipeline = st.button("🚀 Run Full Pipeline", use_container_width=True,
@@ -164,6 +164,25 @@ vessel_df, spill_gdf, drift_df, shap_factors, metrics = load_demo_data()
 
 st.title("🛰️ Maritime Security Intelligence Dashboard")
 st.markdown("**Explainable Multi-Modal AI** | Dark Fleet · Illegal Fishing · Oil Spill · Risk Assessment")
+
+# The "Run Full Pipeline" button is not yet wired to live inference (no glue from
+# trained checkpoints → GEE pull → models → maps). Give the user honest feedback
+# instead of a silent no-op. Everything below renders from demo data.
+if run_pipeline:
+    have_oil = any(Path("checkpoints/oil").glob("best_*.pt"))
+    have_fish = Path("checkpoints/fishing/fishing_xgb.json").exists()
+    if not (have_oil and have_fish):
+        st.warning(
+            "Live pipeline not available yet — train the models first "
+            "(missing checkpoints). The views below show demo data.",
+            icon="⚠️",
+        )
+    else:
+        st.info(
+            "Checkpoints found, but live scene inference is not wired into the "
+            "dashboard yet. Showing demo data.",
+            icon="ℹ️",
+        )
 
 # ── Top KPI strip ──────────────────────────────────────────────────────────────
 
@@ -388,7 +407,10 @@ with tabs[6]:
 
     st.markdown("---")
     st.markdown("#### Segmentation Training Curve")
-    hist_path = Path("checkpoints/history.json")
+    # training history is written per-model as checkpoints/oil/history_<tag>.json
+    hist_candidates = sorted(Path("checkpoints/oil").glob("history_*.json")) \
+        if Path("checkpoints/oil").exists() else []
+    hist_path = hist_candidates[-1] if hist_candidates else Path("checkpoints/history.json")
     if hist_path.exists():
         history = json.load(open(hist_path))
         hist_df  = pd.DataFrame(history)

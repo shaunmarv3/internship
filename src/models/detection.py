@@ -75,10 +75,11 @@ def chip_sar_scene(
 class SARVesselDetector:
     """
     YOLOv8/v11 wrapper for SAR vessel detection.
-    Two classes: 0=vessel, 1=fixed_infrastructure
+    HRSID is single-class (0=ship). CLASS_NAMES matches the trained model;
+    any out-of-range index falls back to "vessel".
     """
 
-    CLASS_NAMES = ["vessel", "fixed_infrastructure"]
+    CLASS_NAMES = ["ship"]
 
     def __init__(self, model_path: str = "yolov8m.pt", conf_thresh: float = 0.25):
         self.model = YOLO(model_path)
@@ -138,7 +139,7 @@ class SARVesselDetector:
                         "height_px": y2 - y1,
                         "conf": float(conf),
                         "class": int(cls),
-                        "class_name": self.CLASS_NAMES[cls] if cls < len(self.CLASS_NAMES) else "unknown",
+                        "class_name": self.CLASS_NAMES[cls] if cls < len(self.CLASS_NAMES) else "vessel",
                     })
         # deduplicate overlapping chips with NMS
         detections = _scene_nms(detections, iou_thresh=0.5)

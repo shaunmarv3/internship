@@ -16,11 +16,18 @@ import argparse
 import json
 import math
 import os
+import sys
+import time
 from pathlib import Path
 
 import cv2
 import numpy as np
 from ultralytics import YOLO
+
+sys.path.insert(0, str(Path(__file__).resolve().parents[2]))
+from src.models.hf_utils import (
+    setup_logger, log_banner, gpu_info, fmt_eta, push_to_hub, add_hf_args, add_wandb_args,
+)
 
 
 # ── OBB conversion ─────────────────────────────────────────────────────────────
@@ -116,8 +123,47 @@ MODEL_CONFIGS = {
 }
 
 
-def train(model_key: str, data_yaml: str, project: str = "checkpoints/vessel"):
+def train(model_key: str, data_yaml: str, project: str = "checkpoints/vessel",
+          push_hf: bool = False, hf_repo: str = None, hf_token: str = None,
+          hf_public: bool = False, no_wandb: bool = False,
+          wandb_project: str = "maritime-vessel", wandb_entity: str = None):
     cfg = MODEL_CONFIGS[model_key]
+    logger = setup_logger("vessel-train", logfile=str(Path(project) / f"{cfg['name']}.log"))
+
+    log_banner(logger, f"M1 VESSEL DETECTION — {model_key}  (task={cfg['task']})", {
+        "weights":  cfg["weights"],
+        "data":     data_yaml,
+        "imgsz":    cfg["imgsz"],
+        "batch":    cfg["batch"],
+        "epochs":   cfg["epochs"],
+        "project":  project,
+        "run_name": cfg["name"],
+        "wandb":    "off" if no_wandb else wandb_project,
+        **gpu_info(),
+    })
+
+    # Ultralytics has a native W&B integration — enabling it auto-logs the loss/mAP
+    # curves, PR/confusion plots and the best model. Project/entity via env vars.
+    if not no_wandb:
+        try:
+            import wandb  # noqa: F401
+            from ultralytics import settings as ul_settings
+            ul_settings.update({"wandb": True})
+            os.environ.setdefault("WANDB_PROJECT", wandb_project)
+            if wandb_entity:
+                os.environ.setdefault("WANDB_ENTITY", wandb_entity)
+            logger.info(f"W&B enabled for Ultralytics (project={wandb_project}). "
+                        "Auth: `wandb login` or WANDB_API_KEY.")
+        except Exception as e:
+            logger.warning(f"Could not enable W&B for Ultralytics: {e}")
+    else:
+        try:
+            from ultralytics import settings as ul_settings
+            ul_settings.update({"wandb": False})
+        except Exception:
+            pass
+
+    t0 = time.time()
     model = YOLO(cfg["weights"])
     results = model.train(
         data=data_yaml,
@@ -132,7 +178,38 @@ def train(model_key: str, data_yaml: str, project: str = "checkpoints/vessel"):
         plots=True,
         verbose=True,
     )
-    print(f"\n[{model_key}] Best mAP50: {results.results_dict.get('metrics/mAP50(B)', 'N/A'):.4f}")
+
+    # Ultralytics writes weights to <project>/<name>/weights/{best,last}.pt
+    rd = results.results_dict
+    map50    = rd.get("metrics/mAP50(B)", rd.get("metrics/mAP50", "N/A"))
+    map5095  = rd.get("metrics/mAP50-95(B)", rd.get("metrics/mAP50-95", "N/A"))
+    prec     = rd.get("metrics/precision(B)", rd.get("metrics/precision", "N/A"))
+    rec      = rd.get("metrics/recall(B)", rd.get("metrics/recall", "N/A"))
+    save_dir = Path(getattr(model.trainer, "save_dir", Path(project) / cfg["name"]))
+    best_pt  = Path(getattr(model.trainer, "best", save_dir / "weights" / "best.pt"))
+
+    def f(x): return f"{x:.4f}" if isinstance(x, (int, float)) else str(x)
+    log_banner(logger, f"DONE — {model_key}", {
+        "mAP50":      f(map50),
+        "mAP50-95":   f(map5095),
+        "precision":  f(prec),
+        "recall":     f(rec),
+        "total time": fmt_eta(time.time() - t0),
+        "best.pt":    str(best_pt),
+        "run dir":    str(save_dir),
+    })
+
+    if push_hf:
+        logger.info(f"Pushing vessel run to HF '{hf_repo}' (subfolder: vessel/{cfg['name']})...")
+        # push best weights + the results CSV/plots folder for reproducibility
+        push_to_hub(str(best_pt), path_in_repo=f"vessel/{cfg['name']}", repo_id=hf_repo,
+                    token=hf_token, private=not hf_public,
+                    commit_message=f"vessel/{cfg['name']}: mAP50={f(map50)}", logger=logger)
+        results_csv = save_dir / "results.csv"
+        if results_csv.exists():
+            push_to_hub(str(results_csv), path_in_repo=f"vessel/{cfg['name']}", repo_id=hf_repo,
+                        token=hf_token, private=not hf_public,
+                        commit_message=f"vessel/{cfg['name']}: training curve", logger=logger)
     return results
 
 
@@ -178,6 +255,8 @@ if __name__ == "__main__":
     parser.add_argument("--coco_json",   default="",
                         help="Path to COCO JSON for OBB conversion")
     parser.add_argument("--obb_out",     default="data/vessels/HRSID_obb/labels/train")
+    add_wandb_args(parser, default_project="maritime-vessel")
+    add_hf_args(parser)
     args = parser.parse_args()
 
     if args.convert_obb:
@@ -189,4 +268,8 @@ if __name__ == "__main__":
             out_label_dir=args.obb_out,
         )
     else:
-        train(args.model, args.data, args.project)
+        train(args.model, args.data, args.project,
+              push_hf=args.push_hf, hf_repo=args.hf_repo,
+              hf_token=args.hf_token, hf_public=args.hf_public,
+              no_wandb=args.no_wandb, wandb_project=args.wandb_project,
+              wandb_entity=args.wandb_entity)
