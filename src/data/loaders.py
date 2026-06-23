@@ -136,9 +136,12 @@ class OilSpillDataset(Dataset):
         """
         img_dir = self.root / "images"
         mask_dir = self.root / "masks"
-        images = sorted(img_dir.glob("*.tif"))
-        pairs = [(p, mask_dir / p.name) for p in images]
-        pairs = [(im, mk) for im, mk in pairs if mk.exists()]
+        # recursive + stem-matched: handles .tif nested in subfolders after .7z extraction,
+        # and matches image<->mask by filename stem (robust to differing folder layouts)
+        images = sorted(img_dir.rglob("*.tif")) + sorted(img_dir.rglob("*.tiff"))
+        mask_by_stem = ({m.stem: m for m in mask_dir.rglob("*") if m.is_file()}
+                        if mask_dir.exists() else {})
+        pairs = [(im, mask_by_stem[im.stem]) for im in images if im.stem in mask_by_stem]
 
         if self.split == "all" or self.val_split <= 0:
             sel = pairs
