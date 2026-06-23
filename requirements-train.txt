@@ -34,7 +34,7 @@ joblib>=1.3.0
 
 # ── Explainability (M5) ──────────────────────────────────────────────────────
 shap>=0.45.0
-pytorch-grad-cam>=1.5.0
+grad-cam>=1.5.0           # PyPI name is "grad-cam"; import is "pytorch_grad_cam"
 
 # ── Tracking + model hosting ─────────────────────────────────────────────────
 wandb>=0.17.0

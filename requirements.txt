@@ -37,7 +37,7 @@ joblib>=1.3.0                 # used by train_illegal_fishing (explicit; also a 
 
 # ── Explainability (M5) ──────────────────────────────────────────────────────
 shap>=0.45.0
-pytorch-grad-cam>=1.5.0
+grad-cam>=1.5.0               # PyPI name is "grad-cam"; import is "pytorch_grad_cam"
 lime>=0.2.0
 
 # ── Experiment tracking + model hosting ──────────────────────────────────────
