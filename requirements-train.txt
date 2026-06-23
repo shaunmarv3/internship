@@ -1,0 +1,48 @@
+# Training + smoke-test dependencies — Colab/Lightning friendly.
+# Excludes the live-feed (GEE / Copernicus / ERA5) and Streamlit app packages that
+# bloat the resolver and can conflict on Colab's pre-populated env. Use the full
+# requirements.txt only when you need the live demo / dashboard.
+#
+#   pip install -r requirements-train.txt
+
+# ── Core (preinstalled on Colab; pip will see them satisfied) ────────────────
+torch>=2.2.0
+torchvision>=0.17.0
+numpy>=1.24.0
+pandas>=2.0.0
+scikit-learn>=1.3.0
+scipy>=1.12.0
+
+# ── CV (M1 detection, M3 segmentation) ───────────────────────────────────────
+segmentation-models-pytorch>=0.3.3
+transformers>=4.40.0
+ultralytics>=8.2.0
+albumentations>=1.4.0,<2.0
+opencv-python-headless>=4.9.0
+Pillow>=10.0.0
+
+# ── Geospatial (SAR I/O, fusion) ─────────────────────────────────────────────
+rasterio>=1.3.9
+geopandas>=0.14.0
+shapely>=2.0.0
+pyproj>=3.6.0
+fiona>=1.9.0
+
+# ── Tabular (M2 fishing) ─────────────────────────────────────────────────────
+xgboost>=2.0.0
+joblib>=1.3.0
+
+# ── Explainability (M5) ──────────────────────────────────────────────────────
+shap>=0.45.0
+pytorch-grad-cam>=1.5.0
+
+# ── Tracking + model hosting ─────────────────────────────────────────────────
+wandb>=0.17.0
+huggingface-hub>=0.23.0
+
+# ── Needed only so every src/ module imports during the smoke test ───────────
+folium>=0.16.0            # src/viz/maps.py
+matplotlib>=3.8.0         # shap / grad-cam plots
+requests>=2.31.0          # src/fusion/ais_matching.py
+tqdm>=4.66.0
+PyYAML>=6.0.1
