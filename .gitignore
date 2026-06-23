@@ -1,5 +1,6 @@
 data/
 checkpoints/
+smoke_data/
 *.pt
 *.pth
 *.ckpt

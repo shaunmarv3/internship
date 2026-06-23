@@ -126,8 +126,12 @@ MODEL_CONFIGS = {
 def train(model_key: str, data_yaml: str, project: str = "checkpoints/vessel",
           push_hf: bool = False, hf_repo: str = None, hf_token: str = None,
           hf_public: bool = False, no_wandb: bool = False,
-          wandb_project: str = "maritime-vessel", wandb_entity: str = None):
-    cfg = MODEL_CONFIGS[model_key]
+          wandb_project: str = "maritime-vessel", wandb_entity: str = None,
+          epochs: int = None, imgsz: int = None, batch: int = None):
+    cfg = dict(MODEL_CONFIGS[model_key])          # copy so overrides don't mutate the global
+    if epochs is not None: cfg["epochs"] = epochs   # overrides (e.g. for smoke tests)
+    if imgsz  is not None: cfg["imgsz"]  = imgsz
+    if batch  is not None: cfg["batch"]  = batch
     logger = setup_logger("vessel-train", logfile=str(Path(project) / f"{cfg['name']}.log"))
 
     log_banner(logger, f"M1 VESSEL DETECTION — {model_key}  (task={cfg['task']})", {
@@ -255,6 +259,9 @@ if __name__ == "__main__":
     parser.add_argument("--coco_json",   default="",
                         help="Path to COCO JSON for OBB conversion")
     parser.add_argument("--obb_out",     default="data/vessels/HRSID_obb/labels/train")
+    parser.add_argument("--epochs", type=int, default=None, help="override cfg epochs")
+    parser.add_argument("--imgsz",  type=int, default=None, help="override cfg imgsz")
+    parser.add_argument("--batch",  type=int, default=None, help="override cfg batch")
     add_wandb_args(parser, default_project="maritime-vessel")
     add_hf_args(parser)
     args = parser.parse_args()
@@ -272,4 +279,5 @@ if __name__ == "__main__":
               push_hf=args.push_hf, hf_repo=args.hf_repo,
               hf_token=args.hf_token, hf_public=args.hf_public,
               no_wandb=args.no_wandb, wandb_project=args.wandb_project,
-              wandb_entity=args.wandb_entity)
+              wandb_entity=args.wandb_entity,
+              epochs=args.epochs, imgsz=args.imgsz, batch=args.batch)
