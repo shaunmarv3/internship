@@ -188,7 +188,16 @@ def train(model_key: str, data_yaml: str, project: str = "checkpoints/vessel",
     )
 
     # Ultralytics writes weights to <project>/<name>/weights/{best,last}.pt
-    rd = results.results_dict
+    # In DDP mode model.train() returns None on worker ranks — read from CSV instead
+    rd = getattr(results, 'results_dict', None) or {}
+    if not rd:
+        results_csv = Path(project) / cfg["name"] / "results.csv"
+        if results_csv.exists():
+            import csv
+            rows = list(csv.DictReader(open(results_csv)))
+            if rows:
+                last = {k.strip(): v.strip() for k, v in rows[-1].items()}
+                rd = last
     map50    = rd.get("metrics/mAP50(B)", rd.get("metrics/mAP50", "N/A"))
     map5095  = rd.get("metrics/mAP50-95(B)", rd.get("metrics/mAP50-95", "N/A"))
     prec     = rd.get("metrics/precision(B)", rd.get("metrics/precision", "N/A"))
