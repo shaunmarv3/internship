@@ -85,6 +85,7 @@ class OilSpillDataset(Dataset):
         img_size: int = 512,
         val_split: float = 0.15,     # zenodo: fraction held out for validation
         split_seed: int = 42,        # zenodo: deterministic train/val partition
+        cache_dir=None,              # if set, cache preprocessed bands here (float16 .npy)
     ):
         self.root = Path(root)
         self.split = split
@@ -94,6 +95,9 @@ class OilSpillDataset(Dataset):
         self.val_split = val_split
         self.split_seed = split_seed
         self.num_classes = 5 if dataset_type == "krestenitis" else 2
+        self.cache_dir = Path(cache_dir) if cache_dir else None
+        if self.cache_dir is not None:
+            self.cache_dir.mkdir(parents=True, exist_ok=True)
 
         self.image_paths, self.mask_paths = self._collect_paths()
         assert len(self.image_paths) == len(self.mask_paths), \
@@ -160,14 +164,34 @@ class OilSpillDataset(Dataset):
     def __len__(self):
         return len(self.image_paths)
 
+    def _preprocess_bands(self, path: Path) -> np.ndarray:
+        """C×H×W float32 [0,1] preprocessed bands, cached to disk if cache_dir is set.
+
+        The dB→linear + Lee filter is expensive and identical every epoch, so the
+        first epoch computes + caches it (float16); later epochs just np.load it.
+        Augmentation still runs per-epoch in __getitem__, so variety is preserved.
+        """
+        if self.cache_dir is not None:
+            cpath = self.cache_dir / f"{path.stem}.npy"
+            if cpath.exists():
+                return np.load(cpath).astype(np.float32)
+        with rasterio.open(path) as src:
+            raw = src.read().astype(np.float32)      # C×H×W (dB Sigma0 for Zenodo)
+        # SAME pipeline as inference: per-band dB→linear (auto-detected), Lee speckle
+        # filter, percentile-clip + normalize to [0,1]. No train/serve skew.
+        proc = preprocess_sar_bands(raw)             # C×H×W float32 in [0,1]
+        if self.cache_dir is not None:
+            # atomic write (safe under many workers): unique tmp ending in .npy so
+            # np.save doesn't append a second .npy, then rename into place.
+            tmp = self.cache_dir / f"{path.stem}.{os.getpid()}.tmp.npy"
+            np.save(tmp, proc.astype(np.float16))
+            os.replace(tmp, cpath)
+        return proc
+
     def _load_image(self, path: Path) -> np.ndarray:
         """Load SAR image as float32 H×W×C (1 or 2 channels → replicate to 3 for encoders)."""
         if path.suffix.lower() in {".tif", ".tiff"}:
-            with rasterio.open(path) as src:
-                raw = src.read().astype(np.float32)  # C×H×W (dB Sigma0 for Zenodo)
-            # SAME pipeline as inference: per-band dB→linear (auto-detected), Lee speckle
-            # filter, percentile-clip + normalize to [0,1]. No train/serve skew.
-            proc = preprocess_sar_bands(raw)         # C×H×W float32 in [0,1]
+            proc = self._preprocess_bands(path)      # C×H×W float32 [0,1] (cached)
             img = np.transpose(proc, (1, 2, 0))      # H×W×C
             # replicate to 3 channels if needed
             if img.shape[2] == 1:
@@ -240,19 +264,30 @@ def get_oil_dataloaders(
     img_size: int = 512,
     batch_size: int = 8,
     num_workers: int = 4,
+    cache_preproc: bool = True,
 ):
+    # Cache the expensive dB->linear+Lee preprocessing once (shared across all models
+    # and epochs) so the GPU isn't starved re-filtering the same images every epoch.
+    cache_dir = Path(root) / ".preproc_cache" if cache_preproc else None
     train_ds = OilSpillDataset(
         root, split="train", dataset_type=dataset_type,
         transform=get_oil_transforms(img_size, "train"), img_size=img_size,
+        cache_dir=cache_dir,
     )
     val_ds = OilSpillDataset(
         root, split="test", dataset_type=dataset_type,
         transform=get_oil_transforms(img_size, "val"), img_size=img_size,
+        cache_dir=cache_dir,
     )
+    # Training is data-bound (per-image dB->linear + Lee filter at native res on CPU),
+    # so on a fast GPU (H100) keep workers warm and prefetch deeper to hide that latency.
+    extra = {}
+    if num_workers > 0:
+        extra = {"persistent_workers": True, "prefetch_factor": 4}
     train_loader = DataLoader(train_ds, batch_size=batch_size, shuffle=True,
-                              num_workers=num_workers, pin_memory=True, drop_last=True)
+                              num_workers=num_workers, pin_memory=True, drop_last=True, **extra)
     val_loader   = DataLoader(val_ds, batch_size=batch_size, shuffle=False,
-                              num_workers=num_workers, pin_memory=True)
+                              num_workers=num_workers, pin_memory=True, **extra)
     return train_loader, val_loader
 
 
