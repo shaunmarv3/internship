@@ -127,7 +127,8 @@ def train(model_key: str, data_yaml: str, project: str = "checkpoints/vessel",
           push_hf: bool = False, hf_repo: str = None, hf_token: str = None,
           hf_public: bool = False, no_wandb: bool = False,
           wandb_project: str = "maritime-vessel", wandb_entity: str = None,
-          epochs: int = None, imgsz: int = None, batch: int = None):
+          epochs: int = None, imgsz: int = None, batch: int = None,
+          device: str = "0"):
     cfg = dict(MODEL_CONFIGS[model_key])          # copy so overrides don't mutate the global
     if epochs is not None: cfg["epochs"] = epochs   # overrides (e.g. for smoke tests)
     if imgsz  is not None: cfg["imgsz"]  = imgsz
@@ -142,6 +143,7 @@ def train(model_key: str, data_yaml: str, project: str = "checkpoints/vessel",
         "epochs":   cfg["epochs"],
         "project":  project,
         "run_name": cfg["name"],
+        "device":   device,
         "wandb":    "off" if no_wandb else wandb_project,
         **gpu_info(),
     })
@@ -176,7 +178,7 @@ def train(model_key: str, data_yaml: str, project: str = "checkpoints/vessel",
         batch=cfg["batch"],
         project=project,
         name=cfg["name"],
-        device=0,
+        device=device,           # "0" single-GPU, "0,1" multi-GPU DDP (e.g. Kaggle 2xT4)
         patience=15,
         save=True,
         plots=True,
@@ -262,6 +264,8 @@ if __name__ == "__main__":
     parser.add_argument("--epochs", type=int, default=None, help="override cfg epochs")
     parser.add_argument("--imgsz",  type=int, default=None, help="override cfg imgsz")
     parser.add_argument("--batch",  type=int, default=None, help="override cfg batch")
+    parser.add_argument("--device", default="0",
+                        help="GPU id(s): '0' single, '0,1' multi-GPU DDP (e.g. Kaggle 2xT4)")
     add_wandb_args(parser, default_project="maritime-vessel")
     add_hf_args(parser)
     args = parser.parse_args()
@@ -280,4 +284,5 @@ if __name__ == "__main__":
               hf_token=args.hf_token, hf_public=args.hf_public,
               no_wandb=args.no_wandb, wandb_project=args.wandb_project,
               wandb_entity=args.wandb_entity,
-              epochs=args.epochs, imgsz=args.imgsz, batch=args.batch)
+              epochs=args.epochs, imgsz=args.imgsz, batch=args.batch,
+              device=args.device)
