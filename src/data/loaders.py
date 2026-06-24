@@ -173,7 +173,11 @@ class OilSpillDataset(Dataset):
             if img.shape[2] == 1:
                 img = np.repeat(img, 3, axis=2)
             elif img.shape[2] == 2:
-                img = np.concatenate([img, img[:, :, :1]], axis=2)
+                # Stack = [band1(VV-ish), band2(VH-ish), band2 again].
+                # Oil signal lives in band 2 (~9 dB oil-vs-water) vs band 1 (~1 dB),
+                # so duplicate the STRONG band into the 3rd channel rather than the
+                # weak one. Keeps VV for look-alike/sea-state context, emphasises VH.
+                img = np.concatenate([img, img[:, :, 1:2]], axis=2)
         else:
             img = np.array(Image.open(path).convert("RGB"), dtype=np.float32) / 255.0
         return img.astype(np.float32)  # H×W×3, float32
