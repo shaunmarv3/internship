@@ -1,12 +1,12 @@
 """
 SAR Vessel Detection — 3-model benchmark training script.
-Models: YOLOv8m (baseline) → YOLOv11m-OBB (oriented) → RT-DETR-L (transformer)
+Models: YOLOv8m (baseline) → YOLO11m-OBB (oriented) → YOLO26m (2026 flagship)
 Dataset: HRSID — 4,042 train / 1,962 val, 800×800 JPG, single class: ship
 
-Run order on Lightning.ai H100:
-  python src/models/train_detection.py --model yolov8m
-  python src/models/train_detection.py --model yolo11m-obb   (needs OBB labels)
-  python src/models/train_detection.py --model rtdetr-l      --batch 8
+Run order (Kaggle 2×T4 with DDP, or Lightning H100):
+  python src/models/train_detection.py --model yolov8m     --device 0,1
+  python src/models/train_detection.py --model yolo11m-obb --device 0,1  (needs OBB labels)
+  python src/models/train_detection.py --model yolo26m     --device 0,1
 
 OBB label generation (run once before yolo11m-obb):
   python src/models/train_detection.py --convert_obb --coco_json /path/to/train2017.json
@@ -112,13 +112,15 @@ MODEL_CONFIGS = {
         "epochs":   50,
         "name":     "hrsid_yolo11m_obb",
     },
-    "rtdetr-l": {
-        "weights":  "rtdetr-l.pt",
+    # RT-DETR-L retired: YOLO26 (Ultralytics 2026 flagship) is faster, more accurate,
+    # no NMS, natively OBB-capable, and ships in the standard ultralytics pip package.
+    "yolo26m": {
+        "weights":  "yolo26m.pt",
         "task":     "detect",
         "imgsz":    800,
-        "batch":    8,
+        "batch":    16,
         "epochs":   50,
-        "name":     "hrsid_rtdetr_l",
+        "name":     "hrsid_yolo26m",
     },
 }
 
@@ -253,7 +255,8 @@ def detect_vessels(model_path: str, chips: list, conf: float = 0.25) -> list:
 if __name__ == "__main__":
     parser = argparse.ArgumentParser()
     parser.add_argument("--model",       default="yolov8m",
-                        choices=list(MODEL_CONFIGS.keys()))
+                        choices=list(MODEL_CONFIGS.keys()),
+                        help="yolov8m=baseline, yolo11m-obb=oriented boxes, yolo26m=2026 flagship")
     parser.add_argument("--data",        default="data/vessels/HRSID_yolo/data.yaml")
     parser.add_argument("--project",     default="checkpoints/vessel")
     parser.add_argument("--convert_obb", action="store_true",

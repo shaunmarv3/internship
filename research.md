@@ -116,6 +116,58 @@ Building `data/oil` (I+II) and `data/oil_test` (III) surfaced several traps; all
 - **Loader confirmed correct:** `_load_image → preprocess_sar_bands` does `dB→linear (db_to_linear) → Lee → normalize` — matches `sar_preprocess` inference (no skew). The inspector's "add dB→linear" warning is STALE hardcoded text (fix landed in commit d37913d); ignore it. (TODO low-pri: delete that stale message from inspect_oil_data.py.)
 - Smoke test (imports+preprocess+oil) PASS on band-2 loader (commit 2f5bf49) before real training.
 
+### M3 RESULTS — 3-model benchmark (2026-06-24, H100)
+Trained on I+II (2,184 train / 386 val), tested on Part III held-out (450). All SegFormer-b4 backbone, 512px, 50 epochs, batch 16, lr 6e-5, `[VV,VH,VH]` loader, class weights [0.027, 1.973].
+
+| Model | Params | **val** OilIoU | **test** OilIoU | test mIoU | val→test drop | time |
+|---|---|---|---|---|---|---|
+| DeepLabV3+ | 26.7M | 0.7728 | 0.3563 | 0.6667 | −0.42 | 45m |
+| **SegFormer-b4** | 64.0M | **0.7993** | **0.4806** | **0.7311** | **−0.32** | 1h22m |
+| U-Net | — | 0.7496 | 0.3686 | 0.6730 | −0.38 | 45m |
+
+- **SegFormer-b4 wins** on both val and the held-out Part III test (OilIoU 0.481, mIoU 0.731). Transformer > both CNNs.
+- **SegFormer also generalizes best** — smallest val→test drop (−0.32 vs DeepLab −0.42, UNet −0.38). Paper point: not just higher, but more robust to unseen distribution.
+- **Honest reportable number = test, not val.** Val (same distribution as train) is optimistic ~0.77–0.80; Part III is a separate harder set with 150 deliberate look-alikes → OilIoU ~0.36–0.48. The gap is the *value* of the held-out test (it caught the optimism). Publishing val would have misled.
+- **mIoU stays ~0.73 while OilIoU drops to ~0.48**: mIoU averages easy background (most pixels) + oil; OilIoU is the strict oil metric, hurt by false alarms on Part III look-alikes.
+- baseline_target in code was 0.54 (that was a val-style target); on the true test the best model is 0.48 OilIoU.
+- Result screenshots (val/TRAINING COMPLETE banners) saved in `res/oil/{deeplabv3+,segformer,unet}.png`. Test table → `checkpoints/oil/test_comparison.json`. Checkpoints pushed to HF `shaunmarvell/maritime-security-intelligence/oil/`.
+- **Future work to close the gap:** heavier look-alike augmentation / more Part II negatives in training, decision-threshold tuning on the oil class, or test-time augmentation — all aimed at cutting false positives on look-alikes (the main test-OilIoU killer).
+
+### M1 model selection — 2026 literature sweep (2026-06-24)
+
+Surveyed the SAR ship detection landscape before building the Kaggle training notebook to check if better models than the original RT-DETR-L plan were available.
+
+**Models evaluated:**
+
+| Model | mAP50 on HRSID | Status | Decision |
+|---|---|---|---|
+| SARES-DEIM (arXiv 2604.04127, Apr 2026) | **93.8%** (SOTA) | Paper only — no code released | Skip — same situation as OilSAM2 |
+| LRTransDet (MDPI Remote Sensing 2023) | 93.9% | Has code but custom training pipeline | Skip — out of scope |
+| AC-YOLO (PLOS ONE 2025, based on YOLO11) | YOLO11 + 1.5% | Paper only — custom implementation | Skip |
+| YOLOv12 (NeurIPS 2025) | Competitive | Separate community repo; needs flash-attn conda env; NOT in official Ultralytics | Skip |
+| **YOLO26m** (Ultralytics 2026 flagship) | ~93-94% expected | ✅ In `pip install -U ultralytics`, NMS-free, STAL label assignment | **Selected** |
+| RT-DETR-L (2023) | ~92-94% | In Ultralytics but superseded | **Retired** → replaced by YOLO26m |
+
+**Final 3-model benchmark (revised):**
+1. **YOLOv8m** — 2023 baseline, cited in ~70% of SAR detection papers
+2. **YOLO11m-OBB** — 2024 oriented boxes; HRSID polygon annotations → cv2.minAreaRect; ~40% less speckle background in box vs horizontal
+3. **YOLO26m** — Ultralytics 2026 flagship; no NMS, progressive loss, STAL assignment; same pip package as YOLOv8/11
+
+**Paper story:** horizontal-box CNN (2023) → tight oriented-box CNN (2024) → NMS-free 2026 SOTA — clean temporal + architectural progression matching the oil-spill benchmark structure (CNN → Transformer).
+
+**Key result: SARES-DEIM is true SOTA (93.8%) but unreproducible.** Same pattern as OilSAM2 in M3. Honest benchmark uses the best *reproducible* model (YOLO26m). This is exactly what we reported for M3 (SegFormer-b4 instead of OilSAM2). Paper framing: "We use the best models whose code is publicly available; two domain-specific SOTA models (OilSAM2, SARES-DEIM) had no public implementation at time of writing."
+
+### M1 Kaggle training setup (2026-06-24)
+
+- **Platform:** Kaggle 2×T4 (15 GB each, 30 GB total), DDP via `device="0,1"` — Ultralytics handles DDP automatically
+- **Data:** downloaded fresh from Google Drive in notebook (614 MB main + ~220 MB negatives). HRSID is NOT on Kaggle as a public dataset — must `gdown` it.
+- **Conversion:** COCO JSON → YOLO horizontal (bbox cx cy w h); COCO polygon → OBB 4-corner (cv2.minAreaRect) — both done inline in notebook
+- **Negatives:** 400 pure-background PNG files added to train (empty label files); 1 stem collision fixed (`P0128_600_1400_4800_5600` → `_neg` suffix)
+- **Timing estimate:** ~2 min/epoch with 2×T4 DDP (was ~4 min single T4 in Colab sanity check at 5 epochs) → 50 epochs ≈ 1.5-2 h/model → ~5-6 h total for 3 models. Fits in Kaggle 12 h session.
+- **Notebook:** `notebooks/kaggle_ship_detection.ipynb` — self-contained, clones repo, downloads data, converts, trains all 3, prints results table, pushes to HF.
+- **Auth:** HF_TOKEN + WANDB_API_KEY loaded from Kaggle secrets (Settings → Secrets → Add).
+- **OBB dataset note:** OBB images symlinked from YOLO_DIR to save disk (symlinks work on Kaggle Linux). Only labels differ.
+
 ### M2 vessel-detection data — HRSID download (2026-06-24)
 - **Dataset:** HRSID (High-Resolution SAR Images Dataset) for ship detection. Single class (0 = ship), 800×800 SAR JPEG chips in **COCO format** (`train2017.json` / `test2017.json`). These tiles are JPEG crops with **no** geo-reference (training only; lat/lon comes from the full georeferenced scene at inference — see AIS section above).
 - **Source:** Google Drive file id `1NY3ovgc-woDlNoQdyqzRB3t9McOBH5Ms`, ~614 MB zip (not the ~1.5 GB upper estimate). Pulled with `gdown` (Drive's large-file virus-scan confirm is handled by `gdown.download(id=...)`).
