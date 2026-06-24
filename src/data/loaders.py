@@ -265,10 +265,20 @@ def compute_class_weights(dataset: OilSpillDataset, num_classes: int) -> torch.T
     """
     counts = np.zeros(num_classes, dtype=np.float64)
     print("Computing class weights (one-time scan)...")
-    for _, mask in dataset:
-        mask_np = mask.numpy() if isinstance(mask, torch.Tensor) else mask
-        for c in range(num_classes):
-            counts[c] += (mask_np == c).sum()
+    # Read MASKS ONLY. Iterating the dataset would call __getitem__, which fully
+    # preprocesses each image (dB->linear + Lee filter at 2048^2) and then discards
+    # it here — turning a quick pixel-count into a multi-minute scan (×N models).
+    mask_paths = getattr(dataset, "mask_paths", None)
+    if mask_paths is not None:
+        for mp in mask_paths:
+            mask_np = dataset._load_mask(mp)
+            for c in range(num_classes):
+                counts[c] += (mask_np == c).sum()
+    else:  # fallback: dataset without exposed mask_paths
+        for _, mask in dataset:
+            mask_np = mask.numpy() if isinstance(mask, torch.Tensor) else mask
+            for c in range(num_classes):
+                counts[c] += (mask_np == c).sum()
     total = counts.sum()
     weights = total / (num_classes * counts + 1e-6)
     weights = weights / weights.sum() * num_classes

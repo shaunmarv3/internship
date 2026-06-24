@@ -92,5 +92,33 @@ Caveat: HRSID 800×800 tiles are JPEG crops with **no** geo-reference — they'r
 - Model trains on negatives too (empty sea, unboxed cities) → "bright ≠ ship". Ships = bright compact hard targets vs dark water.
 - Genuine weakness: **inshore false positives** (docks, cranes, small islands). HRSID's inshore/offshore split lets us *report* this; production uses a coastline/land mask + confidence threshold + NMS.
 
-### Status
-- Part I oil data (40.7 GB images + 6 MB masks) uploaded to HF `shaunmarvell/maritime-oil-data` via `upload_large_folder` (~81 MB/s). Repo holds the `.7z` archives; extract a few tifs locally to display.
+### M3 training data protocol — all 3 parts (2026-06-24)
+Decision: the reportable M3 model trains on **Part I + Part II** and is tested on **Part III** (held out). Roles:
+- **Part I** (1,200 oil + masks) = positives.
+- **Part II** (lookalike + no-oil + masks) = hard negatives — without them the model over-predicts oil (flags every dark patch); the dataset has a dedicated look-alike class for exactly this. Combined I+II ≈ 2,570 samples (matches train_segmentation.py docstring).
+- **Part III** (150 oil / 150 lookalike / 150 no-oil + masks) = canonical TEST set → the paper benchmark number. NOT used for train/val (would be leakage + optimistic).
+- **Why not Part I only:** a Part-I-only val split has no negatives → optimistic, non-reportable IoU. Part I alone was just a plumbing smoke check on real data.
+- **Collision fix:** each part numbers from 0001 → naive merge collides filename stems and the loader (stem-based image↔mask pairing) would mis-pair. Prep prefixes stems per source: `p1_` (oil), `p2l_` (lookalike), `p2n_` (no-oil), `p3_` (test). Same prefix applied to a file's image and mask preserves pairing.
+- **Part III split:** images+masks are mixed in one archive → separated by band count (2-band VV/VH = image, 1-band = mask), since the tiles aren't reliably foldered.
+- Layout produced: `data/oil/{images,masks}` = I+II (train/val auto-split by loader); `data/oil_test/{images,masks}` = III. Eval loads `best_segformer.pt`, runs SegmentationMetrics on `data/oil_test`, reports OilIoU/mIoU (baseline_target 0.54).
+
+### Data prep gotchas (Lightning, 2026-06-24) — all resolved
+Building `data/oil` (I+II) and `data/oil_test` (III) surfaced several traps; all fixed and verified:
+- **Extraction speed:** `py7zr.extractall` of the 40.7 GB Part I is very slow (pure-Python, single-thread). Use system `7z -mmt=on` (p7zip-full) — ~5-10x faster. The earlier "fast Colab" extract was a red herring (it only pulled 4 preview images, not 1,200).
+- **HF rate-limit stall:** unauthenticated HF downloads throttle/stall after ~60 GB. Fix: `huggingface_hub.login(token)` → no-oil pull went 22.9 GB in 86 s @ 556 MB/s; Part III 9.9 GB @ 1.64 GB/s. Always authenticate for multi-archive pulls. `hf_hub_download` resumes partial `.incomplete` files.
+- **Part III filename collisions (silent data loss):** Part III mixes oil/lookalike/no-oil each numbered 0000–0149. A single `p3_` prefix collapsed 450 files → 150 (same-stem `shutil.move` overwrites). Fix: per-category prefix `p3o_`/`p3l_`/`p3n_` (category detected from path: "look"→l, "no"+"oil"→n, "oil"→o).
+- **Part III mask stem suffix:** Part III masks are `<n>_segmentation.tif` while images are `<n>.tif` → loader pairs by exact stem → 0 matches. Fix: strip `_segmentation` when organizing. (Parts I/II masks are bare-numbered, so train paired fine.)
+- **Always verify PAIRS, not counts:** matching image/mask *counts* ≠ matching *stems*. The `{stem}` set-intersection check caught both Part III bugs (showed MATCHED STEMS: 0 despite 450/450 counts). Part III images+masks separated by band count (2=image, 1=mask).
+
+### Status — DATA VALIDATED, ready to train (2026-06-24)
+- **TRAIN `data/oil`** (I+II): 2,570 images = 2,570 masks, **paired 2570/2570**, format **dB** (min ≈ −48…−55, p99 ≈ −26…−31), masks {0,1}, no NaNs, oil pixel mean 1.11%.
+- **TEST `data/oil_test`** (III): 450 paired, dB. Inspector verdict showing oil 0.00% is a sampling artifact (8 samples all `p3l_` lookalikes = all-zero masks); `p3o_` oil images do carry oil.
+- **Loader confirmed correct:** `_load_image → preprocess_sar_bands` does `dB→linear (db_to_linear) → Lee → normalize` — matches `sar_preprocess` inference (no skew). The inspector's "add dB→linear" warning is STALE hardcoded text (fix landed in commit d37913d); ignore it. (TODO low-pri: delete that stale message from inspect_oil_data.py.)
+- Smoke test (imports+preprocess+oil) PASS on band-2 loader (commit 2f5bf49) before real training.
+
+### M2 vessel-detection data — HRSID download (2026-06-24)
+- **Dataset:** HRSID (High-Resolution SAR Images Dataset) for ship detection. Single class (0 = ship), 800×800 SAR JPEG chips in **COCO format** (`train2017.json` / `test2017.json`). These tiles are JPEG crops with **no** geo-reference (training only; lat/lon comes from the full georeferenced scene at inference — see AIS section above).
+- **Source:** Google Drive file id `1NY3ovgc-woDlNoQdyqzRB3t9McOBH5Ms`, ~614 MB zip (not the ~1.5 GB upper estimate). Pulled with `gdown` (Drive's large-file virus-scan confirm is handled by `gdown.download(id=...)`).
+- **Location:** extracted to `data/vessels/hrsid/` — kept the existing **plural** `data/vessels` dir to stay parallel with `data/oil` (user wrote "data/vessel"; resolved to the existing convention rather than creating a near-duplicate singular dir). Gitignored via `/data/`.
+- **Reproducer:** root `download_vessel_data.py` (pip-installs nothing; needs `gdown`). `--force` re-downloads, `--keep-zip` retains the archive (default deletes it post-extract). Replaces the Colab `!gdown … && !unzip` snippet with a Windows-friendly pure-Python `zipfile` extract (no `unzip` dependency).
+- **Viewing all images:** `data/vessels/view_hrsid.py` — default mode saves `hrsid_overview.png` (the N busiest harbor scenes with lime ship boxes, reproducing the original snippet); `--gallery` builds `hrsid_gallery.html` linking **every** image with per-image ship counts for scroll-through browsing.
