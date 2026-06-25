@@ -5,8 +5,28 @@ import maplibregl from "maplibre-gl";
 import "maplibre-gl/dist/maplibre-gl.css";
 import type { CaseStudyDetail, LayerName, SelectedFeature } from "@/lib/types";
 
-// Free, no-token dark basemap.
-const STYLE = "https://basemaps.cartocdn.com/gl/dark-matter-gl-style/style.json";
+// Inline style: a dark background that ALWAYS renders (so the data layers show even
+// fully offline) plus CARTO raster tiles for coastline context when online. This avoids
+// the external vector-style/glyph/sprite fetch that can leave the map blank if it fails.
+const STYLE: maplibregl.StyleSpecification = {
+  version: 8,
+  sources: {
+    carto: {
+      type: "raster",
+      tiles: [
+        "https://a.basemaps.cartocdn.com/dark_all/{z}/{x}/{y}.png",
+        "https://b.basemaps.cartocdn.com/dark_all/{z}/{x}/{y}.png",
+        "https://c.basemaps.cartocdn.com/dark_all/{z}/{x}/{y}.png",
+      ],
+      tileSize: 256,
+      attribution: "© OpenStreetMap, © CARTO",
+    },
+  },
+  layers: [
+    { id: "bg", type: "background", paint: { "background-color": "#0b1622" } },
+    { id: "carto", type: "raster", source: "carto" },
+  ],
+};
 
 // logical layer name -> maplibre layer ids
 const GROUP: Record<LayerName, string[]> = {
