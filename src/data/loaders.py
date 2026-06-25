@@ -1,8 +1,9 @@
 """
 Oil spill and vessel dataset loaders.
-Handles both:
+Handles:
   - Krestenitis/M4D 5-class (sea/oil/look-alike/ship/land)
-  - Zenodo binary (oil=1 / background=0)
+  - Zenodo binary (oil=1 / background=0)  — raw dB GeoTIFF, needs dB→linear
+  - SOS (Refined Deep-SAR, Zenodo 15298010) binary — grayscale PNG, already intensity
 """
 
 import os
@@ -94,7 +95,7 @@ class OilSpillDataset(Dataset):
         self.img_size = img_size
         self.val_split = val_split
         self.split_seed = split_seed
-        self.num_classes = 5 if dataset_type == "krestenitis" else 2
+        self.num_classes = 5 if dataset_type == "krestenitis" else 2  # sos + zenodo = binary
         self.cache_dir = Path(cache_dir) if cache_dir else None
         if self.cache_dir is not None:
             self.cache_dir.mkdir(parents=True, exist_ok=True)
@@ -107,6 +108,8 @@ class OilSpillDataset(Dataset):
     def _collect_paths(self):
         if self.dataset_type == "krestenitis":
             return self._collect_krestenitis()
+        if self.dataset_type == "sos":
+            return self._collect_sos()
         return self._collect_zenodo()
 
     def _collect_krestenitis(self):
@@ -159,7 +162,71 @@ class OilSpillDataset(Dataset):
             else:  # "train"
                 sel = [pairs[i] for i in range(len(pairs)) if i not in val_idx]
 
-        return [im for im, _ in sel], [mk for _, mk in sel]
+        img_paths = [im for im, _ in sel]
+        msk_paths = [mk for _, mk in sel]
+        # Track which images are hard negatives (p2l_ look-alikes OR p2n_ no-oil)
+        # so the dataloader can upsample them.  Both contribute to false positives:
+        # p2l_ visually mimics oil (ambiguous texture), p2n_ is pure background but
+        # training on more negatives discourages the model from over-predicting oil.
+        self.is_hard_negative = [
+            p.stem.startswith("p2l_") or p.stem.startswith("p2n_")
+            for p in img_paths
+        ]
+        return img_paths, msk_paths
+
+    def _collect_sos(self):
+        """
+        Refined Deep-SAR SOS dataset (Zenodo 15298010).
+        Zip structure: images/{train,val}/*.png + masks/{train,val}/*.png
+        Two sources identified by filename prefix:
+          palsar_*   → ALOS PALSAR L-band (Gulf of Mexico)
+          sentinel_* → Sentinel-1A C-band (Persian Gulf)
+        Grayscale PNG 256×256, binary masks (0=background, 255=oil).
+        Skips macOS resource forks (._* files, .DS_Store).
+        """
+        img_base  = self.root / "images"
+        mask_base = self.root / "masks"
+        exts = {".png", ".jpg", ".jpeg", ".tif", ".tiff"}
+
+        def _is_real(p: Path) -> bool:
+            return p.suffix.lower() in exts and not p.name.startswith("._") and p.name != ".DS_Store"
+
+        # Use the baked-in train/val split from the zip structure.
+        # Fall back to flat layout (legacy extraction) if subdirs don't exist.
+        if self.split in ("test", "val"):
+            subdirs = ["val"]
+        elif self.split == "train":
+            subdirs = ["train"]
+        else:  # "all"
+            subdirs = ["train", "val"]
+
+        def _collect_dir(base: Path, sub: str):
+            d = base / sub
+            if d.exists():
+                return sorted(p for p in d.iterdir() if _is_real(p))
+            # fallback: flat layout (old extraction without subdir preservation)
+            return sorted(p for p in base.iterdir() if _is_real(p))
+
+        images = []
+        for sd in subdirs:
+            images += _collect_dir(img_base, sd)
+
+        # Build mask lookup across all splits (stem → path)
+        mask_by_stem = {}
+        for sd in ["train", "val"]:
+            d = mask_base / sd
+            if d.exists():
+                for m in d.iterdir():
+                    if _is_real(m):
+                        mask_by_stem[m.stem] = m
+        if not mask_by_stem:  # flat fallback
+            for m in mask_base.iterdir():
+                if _is_real(m):
+                    mask_by_stem[m.stem] = m
+
+        pairs = [(im, mask_by_stem[im.stem]) for im in images if im.stem in mask_by_stem]
+        self.is_hard_negative = [False] * len(pairs)
+        return [im for im, _ in pairs], [mk for _, mk in pairs]
 
     def __len__(self):
         return len(self.image_paths)
@@ -189,21 +256,30 @@ class OilSpillDataset(Dataset):
         return proc
 
     def _load_image(self, path: Path) -> np.ndarray:
-        """Load SAR image as float32 H×W×C (1 or 2 channels → replicate to 3 for encoders)."""
+        """Load SAR image as float32 H×W×3.
+
+        Zenodo GeoTIFF:  2-band raw dB → dB→linear + Lee + normalize via sar_preprocess.
+        SOS / other PNG: grayscale already-processed intensity → /255 → replicate to 3 ch.
+        """
         if path.suffix.lower() in {".tif", ".tiff"}:
             proc = self._preprocess_bands(path)      # C×H×W float32 [0,1] (cached)
             img = np.transpose(proc, (1, 2, 0))      # H×W×C
-            # replicate to 3 channels if needed
             if img.shape[2] == 1:
                 img = np.repeat(img, 3, axis=2)
             elif img.shape[2] == 2:
-                # Stack = [band1(VV-ish), band2(VH-ish), band2 again].
-                # Oil signal lives in band 2 (~9 dB oil-vs-water) vs band 1 (~1 dB),
-                # so duplicate the STRONG band into the 3rd channel rather than the
-                # weak one. Keeps VV for look-alike/sea-state context, emphasises VH.
+                # Oil signal lives in band 2 (~9 dB oil-vs-water) vs band 1 (~1 dB).
+                # Duplicate the strong band: [VV, VH, VH] instead of [VV, VH, VV].
                 img = np.concatenate([img, img[:, :, 1:2]], axis=2)
         else:
-            img = np.array(Image.open(path).convert("RGB"), dtype=np.float32) / 255.0
+            # SOS: grayscale PNG (single channel intensity, 0–255, already preprocessed)
+            # Convert to RGB by replicating — encoder expects 3 channels.
+            pil = Image.open(path)
+            if pil.mode != "RGB":
+                pil = pil.convert("L")  # ensure grayscale, then replicate
+                arr = np.array(pil, dtype=np.float32) / 255.0   # H×W [0,1]
+                img = np.stack([arr, arr, arr], axis=2)          # H×W×3
+            else:
+                img = np.array(pil, dtype=np.float32) / 255.0   # H×W×3
         return img.astype(np.float32)  # H×W×3, float32
 
     def _load_mask(self, path: Path) -> np.ndarray:
@@ -211,6 +287,10 @@ class OilSpillDataset(Dataset):
         if self.dataset_type == "zenodo":
             with rasterio.open(path) as src:
                 mask = src.read(1).astype(np.int64)
+        elif self.dataset_type == "sos":
+            # SOS masks are grayscale PNG: 0=background, 255=oil (or 1=oil in some versions).
+            arr = np.array(Image.open(path).convert("L"), dtype=np.int64)
+            mask = (arr > 0).astype(np.int64)   # normalise any non-zero value → class 1
         else:
             mask_img = np.array(Image.open(path).convert("RGB"))
             mask = color_mask_to_index(mask_img)
@@ -242,7 +322,8 @@ def get_oil_transforms(img_size: int = 512, split: str = "train"):
     IMAGENET_STD  = [0.229, 0.224, 0.225]
     if split == "train":
         return A.Compose([
-            A.RandomResizedCrop(height=img_size, width=img_size, scale=(0.5, 1.0)),
+            # albumentations ≥1.4 uses size=(h,w) instead of height= width=
+            A.RandomResizedCrop(size=(img_size, img_size), scale=(0.5, 1.0)),
             A.HorizontalFlip(p=0.5),
             A.VerticalFlip(p=0.5),
             A.RandomRotate90(p=0.5),
@@ -265,7 +346,19 @@ def get_oil_dataloaders(
     batch_size: int = 8,
     num_workers: int = 4,
     cache_preproc: bool = True,
+    upsample_lookalike: float = 1.0,
+    sos_root: str = None,
 ):
+    """
+    upsample_lookalike : weight multiplier for p2l_+p2n_* hard-negative training samples.
+      Default 1.0 = uniform. 2.0 = hard negatives appear ~2x per epoch.
+      Only active for dataset_type=zenodo where stem prefixes identify source.
+
+    sos_root : if set, load SOS dataset from this directory and concatenate it with
+      the primary dataset (zenodo only) for cross-domain generalization. SOS images
+      are grayscale PNG (already intensity), so no dB->linear is applied to them.
+      Val split remains pure Zenodo (cleaner benchmark); SOS is train-only.
+    """
     # Cache the expensive dB->linear+Lee preprocessing once (shared across all models
     # and epochs) so the GPU isn't starved re-filtering the same images every epoch.
     cache_dir = Path(root) / ".preproc_cache" if cache_preproc else None
@@ -284,7 +377,45 @@ def get_oil_dataloaders(
     extra = {}
     if num_workers > 0:
         extra = {"persistent_workers": True, "prefetch_factor": 4}
-    train_loader = DataLoader(train_ds, batch_size=batch_size, shuffle=True,
+
+    # Optionally mix in SOS dataset (cross-domain: PALSAR + Sentinel-1A from different regions)
+    if sos_root is not None and dataset_type == "zenodo":
+        from torch.utils.data import ConcatDataset
+        sos_train = OilSpillDataset(
+            sos_root, split="train", dataset_type="sos",
+            transform=get_oil_transforms(img_size, "train"), img_size=img_size,
+        )
+        n_sos = len(sos_train)
+        train_ds = ConcatDataset([train_ds, sos_train])
+        # Extend the is_hard_negative list so the sampler sees the right length
+        if hasattr(train_ds.datasets[0], "is_hard_negative"):
+            combined_hn = train_ds.datasets[0].is_hard_negative + [False] * n_sos
+            train_ds.is_hard_negative = combined_hn
+        print(f"[DataLoader] Mixed SOS ({n_sos} samples) into Zenodo train set "
+              f"→ {len(train_ds)} total")
+
+    # Look-alike upsampling: give p2l_*+p2n_* stems a higher sampling weight so the
+    # model sees more FP-inducing examples per epoch.  Uses WeightedRandomSampler
+    # (with replacement) instead of shuffle=True.
+    train_shuffle = True
+    train_sampler = None
+    if (dataset_type == "zenodo" and upsample_lookalike > 1.0
+            and hasattr(train_ds, "is_hard_negative")
+            and train_ds.is_hard_negative):
+        import torch
+        from torch.utils.data import WeightedRandomSampler
+        weights = torch.tensor(
+            [upsample_lookalike if hn else 1.0 for hn in train_ds.is_hard_negative],
+            dtype=torch.float,
+        )
+        n_hn = sum(train_ds.is_hard_negative)
+        print(f"[DataLoader] hard-negative upsampling ×{upsample_lookalike:.1f} "
+              f"({n_hn}/{len(train_ds)} p2l_+p2n_ samples in train split)")
+        train_sampler = WeightedRandomSampler(weights, num_samples=len(weights), replacement=True)
+        train_shuffle = False  # sampler and shuffle are mutually exclusive
+
+    train_loader = DataLoader(train_ds, batch_size=batch_size,
+                              shuffle=train_shuffle, sampler=train_sampler,
                               num_workers=num_workers, pin_memory=True, drop_last=True, **extra)
     val_loader   = DataLoader(val_ds, batch_size=batch_size, shuffle=False,
                               num_workers=num_workers, pin_memory=True, **extra)

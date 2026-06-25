@@ -52,12 +52,23 @@ def parse_args():
     p.add_argument("--data_root",     default="data/oil")
     p.add_argument("--dataset_type",  default="krestenitis", choices=["krestenitis", "zenodo"])
     p.add_argument("--model",         default="deeplabv3+",  choices=["oilsam2", "segformer", "deeplabv3+", "unet"])
-    p.add_argument("--backbone",      default="b2")
+    p.add_argument("--backbone",      default="b4",
+                   help="MiT backbone for SegFormer: b2 (25M), b4 (64M), b5 (82M). "
+                        "b4 was the best in the 3-model benchmark; b5 may add 1-2%% OilIoU.")
     p.add_argument("--img_size",      type=int, default=512)
     p.add_argument("--epochs",        type=int, default=50)
     p.add_argument("--batch_size",    type=int, default=8)
     p.add_argument("--lr",            type=float, default=6e-5)
     p.add_argument("--num_workers",   type=int, default=4)
+    p.add_argument("--upsample_lookalike", type=float, default=2.0,
+                   help="Weight multiplier for look-alike training samples (p2l_*+p2n_* stems). "
+                        "2.0 = hard negatives appear ~2x per epoch → cuts FPs on Part III. "
+                        "Set to 1.0 to disable. Only active for --dataset_type zenodo.")
+    p.add_argument("--sos_root", default=None,
+                   help="Path to Refined Deep-SAR SOS dataset root (data/sos). "
+                        "If set, SOS samples are concatenated into the Zenodo training set "
+                        "for cross-domain generalisation (PALSAR + Sentinel-1A + Zenodo). "
+                        "Val set stays pure Zenodo for a clean benchmark.")
     p.add_argument("--checkpoint_dir", default="checkpoints/oil")
     add_wandb_args(p, default_project="maritime-oil-spill")
     add_hf_args(p)
@@ -113,13 +124,15 @@ def main():
     logger = setup_logger("oil-train", logfile=str(ckpt_dir / f"train_{args.model}.log"))
 
     log_banner(logger, f"M3 OIL SEGMENTATION — model='{args.model}'", {
-        "dataset_type": args.dataset_type,
-        "data_root":    args.data_root,
-        "img_size":     args.img_size,
-        "epochs":       args.epochs,
-        "batch_size":   args.batch_size,
-        "lr":           args.lr,
-        "checkpoint_dir": str(ckpt_dir),
+        "dataset_type":       args.dataset_type,
+        "data_root":          args.data_root,
+        "img_size":           args.img_size,
+        "epochs":             args.epochs,
+        "batch_size":         args.batch_size,
+        "lr":                 args.lr,
+        "upsample_lookalike": args.upsample_lookalike,
+        "sos_root":           args.sos_root or "none",
+        "checkpoint_dir":     str(ckpt_dir),
         **gpu_info(),
     })
 
@@ -131,6 +144,8 @@ def main():
         img_size=args.img_size,
         batch_size=args.batch_size,
         num_workers=args.num_workers,
+        upsample_lookalike=args.upsample_lookalike,
+        sos_root=args.sos_root,
     )
     num_classes = 5 if args.dataset_type == "krestenitis" else 2
     class_names = list(OIL_CLASSES_5.values()) if num_classes == 5 else list(OIL_CLASSES_BINARY.values())

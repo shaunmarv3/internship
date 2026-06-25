@@ -133,6 +133,115 @@ Trained on I+II (2,184 train / 386 val), tested on Part III held-out (450). All 
 - Result screenshots (val/TRAINING COMPLETE banners) saved in `res/oil/{deeplabv3+,segformer,unet}.png`. Test table → `checkpoints/oil/test_comparison.json`. Checkpoints pushed to HF `shaunmarvell/maritime-security-intelligence/oil/`.
 - **Future work to close the gap:** heavier look-alike augmentation / more Part II negatives in training, decision-threshold tuning on the oil class, or test-time augmentation — all aimed at cutting false positives on look-alikes (the main test-OilIoU killer).
 
+### M3 improvements — look-alike upsampling + threshold sweep + SegFormer-b5 (2026-06-25)
+
+Three targeted improvements added while M1 YOLO26m trains on Kaggle.
+
+**Root cause of val→test gap (−0.32):** Part III has 150 deliberate look-alike images (dark low-backscatter patches that mimic oil — low-wind zones, algae, slicks from vessels). The model produces oil-class probs of 0.3–0.6 on these → argmax at 0.5 triggers false positives → OilIoU drops from ~0.80 val to ~0.48 test.
+
+#### Fix 1: Look-alike upsampling (`--upsample_lookalike 2.0`, default=2.0 now)
+`src/data/loaders.py` → `get_oil_dataloaders()` now accepts `upsample_lookalike` float.
+When > 1.0 and dataset_type=zenodo, detects `p2l_*` stems (look-alike images from Part II) and builds a `WeightedRandomSampler` giving them 2× weight per epoch. Effect: model sees look-alike patches ~twice as often → more gradient signal for learning "this-is-NOT-oil" on ambiguous textures.
+- `src/models/train_segmentation.py` wires `--upsample_lookalike` arg (default 2.0) through to dataloader.
+- Default changed to ON so the next SegFormer-b5 run benefits automatically.
+
+#### Fix 2: Post-training threshold sweep (`src/models/eval_threshold.py`)
+New evaluation script — no retraining needed. Loads `best_segformer.pt`, runs the full Part III test set, collects oil-class probabilities pixel-by-pixel, then sweeps threshold from 0.30 to 0.80 reporting OilIoU / Precision / Recall at each. Saves `threshold_sweep.json` to the checkpoint directory.
+
+Expected outcome: OilIoU at threshold=0.5 ≈ 0.481; raising to 0.60–0.70 should cut FPs on look-alikes and recover ~3–8 OilIoU points at the cost of some recall. Paper reports argmax (0.5) as the standard metric but notes optimal threshold for operational deployment.
+
+**Run command (Lightning, after training completes):**
+```bash
+python src/models/eval_threshold.py \
+    --checkpoint checkpoints/oil/best_segformer.pt \
+    --test_data  data/oil_test
+```
+Output: `checkpoints/oil/threshold_sweep.json`
+
+#### Fix 3: SegFormer-b5 (larger backbone, +18M params over b4)
+Already supported — just change `--backbone b5`. MiT-b5: 82M params vs b4's 64M. Literature reports +1–3% IoU vs b4 on semantic seg benchmarks. The `BACKBONE_MAP` in `segmentation.py` already maps `"b5" → "nvidia/mit-b5"`. Default backbone in `train_segmentation.py` changed from `b2` to `b4` (what we actually used); b5 is the next step.
+
+**Run command (SegFormer-b5 with upsampling):**
+```bash
+python src/models/train_segmentation.py \
+    --model segformer --backbone b5 \
+    --dataset_type zenodo --data_root data/oil \
+    --epochs 50 --batch_size 12 --lr 4e-5 \
+    --upsample_lookalike 2.0 \
+    --wandb_project maritime-oil-spill --push_hf
+```
+Note: b5 needs slightly smaller batch (12 vs 16 for b4) on H100 due to ~18M more params.
+Lower lr (4e-5 vs 6e-5) recommended for larger models to avoid overshooting.
+
+#### Expected M3 benchmark after improvements
+| Model | test OilIoU | notes |
+|---|---|---|
+| DeepLabV3+ | 0.356 | baseline (frozen) |
+| U-Net | 0.369 | baseline (frozen) |
+| SegFormer-b4 | 0.481 | benchmark run (frozen, no rerun needed) |
+| SegFormer-b4 @ opt. threshold | ~0.52–0.55? | threshold sweep on existing checkpoint |
+| **SegFormer-b5 + upsample** | **~0.53–0.57?** | new SOTA target (next Lightning run) |
+
+No b4 re-run — b4 is the frozen benchmark number. Skip straight to b5 with upsampling.
+Paper story: three-model benchmark (DeepLab/UNet/SegFormer-b4) + improvement run (b5 + look-alike upsampling) + ablation via threshold sweep on existing checkpoint.
+
+### M3 free data add — Refined Deep-SAR SOS dataset (2026-06-25)
+
+**Dataset:** Refined Deep-SAR Oil Spill (SOS), Zenodo record 15298010 (published April 2025).
+Enhanced version of Zhu et al. 2021 (IEEE TGRS) with ~38% training + ~50% val masks manually corrected.
+
+| Property | Value |
+|---|---|
+| Source | ALOS PALSAR (Gulf of Mexico, L-band) + Sentinel-1A (Persian Gulf, C-band) |
+| Size | 8,070 labeled patches (6,455 train + 1,615 test) |
+| Resolution | 256×256 px, grayscale PNG (already intensity — NOT raw dB GeoTIFF) |
+| Masks | Binary PNG: 0=background, 255=oil |
+| Download | zenodo.org/records/15298010 (images.zip 1.1 GB + masks.zip 28 MB) |
+| License | CC BY 4.0 |
+
+**Key difference from Zenodo training data:** SOS images are already-processed grayscale intensity PNGs — the dB→linear + Lee filter step is NOT applied. Loader detects by file extension (`.png` → no sar_preprocess; `.tif` → sar_preprocess as before).
+
+**Cross-domain value:** Zenodo training data is all Sentinel-1 C-band VV/VH; SOS adds L-band PALSAR and a second C-band region (Persian Gulf). Training on both should reduce overfitting to Sentinel-1 GRD texture and improve robustness. Paper point: model generalises across SAR bands (L vs C) and ocean regions.
+
+**Files added:**
+- `download_sos_data.py` — downloads + extracts to `data/sos/images/` + `data/sos/masks/`
+- `src/data/loaders.py` — `dataset_type="sos"` in `OilSpillDataset._collect_sos()`; `_load_image` handles PNG path; `_load_mask` thresholds `> 0` → binary; `get_oil_dataloaders(sos_root=...)` uses `ConcatDataset`
+
+**Download command (Lightning):**
+```bash
+python download_sos_data.py --dest data/sos
+```
+
+**SegFormer-b5 + upsampling + SOS mix run command:**
+```bash
+python src/models/train_segmentation.py \
+    --model segformer --backbone b5 \
+    --dataset_type zenodo --data_root data/oil \
+    --sos_root data/sos \
+    --epochs 50 --batch_size 12 --lr 4e-5 \
+    --upsample_lookalike 2.0 \
+    --wandb_project maritime-oil-spill --push_hf
+```
+
+**IMPORTANT — SOS domain shift concern (observed 2026-06-25):**
+Visualizing SOS revealed a major appearance difference vs Zenodo:
+- SOS PALSAR oil = large dark rivers/channels, 8–15% pixel coverage, heavy speckle (no Lee filter)
+- Zenodo Sentinel-1 oil = tiny thin dark smudges, 0.1–2% coverage, Lee-smoothed
+- Risk: model learns "oil = large dark river" → increases false positives on Zenodo Part III look-alikes → hurts test OilIoU
+- Decision: run b5 WITHOUT SOS first (main result), then WITH SOS as ablation. Compare on Part III.
+
+**Updated expected M3 benchmark:**
+| Model | test OilIoU | notes |
+|---|---|---|
+| DeepLabV3+ | 0.356 | baseline (frozen) |
+| U-Net | 0.369 | baseline (frozen) |
+| SegFormer-b4 | 0.481 | benchmark run (frozen) |
+| SegFormer-b4 @ opt. threshold | ~0.52–0.55? | threshold sweep, no retraining |
+| **SegFormer-b5 + upsample** | **~0.53–0.57?** | main result (no SOS) |
+| SegFormer-b5 + upsample + SOS | TBD | ablation: does cross-domain help? |
+
+Paper story: if SOS helps → "L-band cross-training generalises"; if SOS hurts → "Sentinel-to-Sentinel matters, domain shift is real" — either outcome is a valid finding.
+
 ### M1 model selection — 2026 literature sweep (2026-06-24)
 
 Surveyed the SAR ship detection landscape before building the Kaggle training notebook to check if better models than the original RT-DETR-L plan were available.
