@@ -1,0 +1,8 @@
+{
+  "oil_iou": 0.49,
+  "yolo_map50": 0.94,
+  "dark_count": 1,
+  "slick_count": 1,
+  "security_risk": 0.72,
+  "environmental_risk": 0.61
+}
