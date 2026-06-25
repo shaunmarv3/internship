@@ -354,10 +354,11 @@ def get_oil_dataloaders(
       Default 1.0 = uniform. 2.0 = hard negatives appear ~2x per epoch.
       Only active for dataset_type=zenodo where stem prefixes identify source.
 
-    sos_root : if set, load SOS dataset from this directory and concatenate it with
-      the primary dataset (zenodo only) for cross-domain generalization. SOS images
-      are grayscale PNG (already intensity), so no dB->linear is applied to them.
-      Val split remains pure Zenodo (cleaner benchmark); SOS is train-only.
+    sos_root : if set, load SOS dataset and concatenate with Zenodo (train-only mode).
+      SOS has its own train/val split (images/train/ + images/val/).
+      SOS train → concat with Zenodo train.
+      SOS val   → concat with Zenodo val (broader validation signal).
+      SOS images are grayscale PNG (already intensity), no dB->linear applied.
     """
     # Cache the expensive dB->linear+Lee preprocessing once (shared across all models
     # and epochs) so the GPU isn't starved re-filtering the same images every epoch.
@@ -379,20 +380,28 @@ def get_oil_dataloaders(
         extra = {"persistent_workers": True, "prefetch_factor": 4}
 
     # Optionally mix in SOS dataset (cross-domain: PALSAR + Sentinel-1A from different regions)
+    # SOS has its own train/val baked-in split — use both halves.
     if sos_root is not None and dataset_type == "zenodo":
         from torch.utils.data import ConcatDataset
         sos_train = OilSpillDataset(
             sos_root, split="train", dataset_type="sos",
             transform=get_oil_transforms(img_size, "train"), img_size=img_size,
         )
-        n_sos = len(sos_train)
+        sos_val = OilSpillDataset(
+            sos_root, split="val", dataset_type="sos",
+            transform=get_oil_transforms(img_size, "val"), img_size=img_size,
+        )
+        # Merge SOS train into Zenodo train
+        n_sos_tr = len(sos_train)
         train_ds = ConcatDataset([train_ds, sos_train])
-        # Extend the is_hard_negative list so the sampler sees the right length
         if hasattr(train_ds.datasets[0], "is_hard_negative"):
-            combined_hn = train_ds.datasets[0].is_hard_negative + [False] * n_sos
-            train_ds.is_hard_negative = combined_hn
-        print(f"[DataLoader] Mixed SOS ({n_sos} samples) into Zenodo train set "
-              f"→ {len(train_ds)} total")
+            train_ds.is_hard_negative = (train_ds.datasets[0].is_hard_negative
+                                         + [False] * n_sos_tr)
+        # Merge SOS val into Zenodo val
+        val_ds = ConcatDataset([val_ds, sos_val])
+        print(f"[DataLoader] SOS mixed in — "
+              f"train: Zenodo({len(train_ds.datasets[0])}) + SOS({n_sos_tr}) = {len(train_ds)} | "
+              f"val: Zenodo({len(val_ds.datasets[0])}) + SOS({len(sos_val)}) = {len(val_ds)}")
 
     # Look-alike upsampling: give p2l_*+p2n_* stems a higher sampling weight so the
     # model sees more FP-inducing examples per epoch.  Uses WeightedRandomSampler
