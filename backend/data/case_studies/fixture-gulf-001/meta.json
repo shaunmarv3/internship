@@ -1,0 +1,8 @@
+{
+  "id": "fixture-gulf-001",
+  "title": "Gulf of Mexico — fixture",
+  "sensor": "Sentinel-1 (fixture)",
+  "acquired_utc": "2024-03-12T06:14:00Z",
+  "bbox": [-90.6, 28.0, -90.0, 28.5],
+  "summary": "Synthetic fixture: 1 oil slick, 2 vessels (1 dark), 1 zone, 1 fusion link."
+}
