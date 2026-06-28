@@ -1,0 +1,23 @@
+{
+  "id": "s1_malacca_2024-03-01_2024-04-01",
+  "title": "s1_malacca_2024-03-01_2024-04-01",
+  "sensor": "Sentinel-1",
+  "acquired_utc": "2026-06-28T11:40:16Z",
+  "bbox": [
+    103.3486,
+    1.278,
+    103.4917,
+    1.422
+  ],
+  "summary": "4 slick(s), 4 dark vessel(s).",
+  "scene_overlay": {
+    "png": "s1_malacca_2024-03-01_2024-04-01/overlays/scene.png",
+    "bounds": [
+      103.348568,
+      1.278033,
+      103.49167,
+      1.422033
+    ],
+    "v": 1782646854
+  }
+}

@@ -8,7 +8,6 @@ const LABELS: Record<LayerName, string> = {
   oil: "Oil slick",
   ais_tracks: "AIS tracks",
   zones: "Zones",
-  fusion_links: "Fusion links",
 };
 
 const DOT: Record<LayerName, string> = {
@@ -17,10 +16,9 @@ const DOT: Record<LayerName, string> = {
   oil: "#f59e0b",
   ais_tracks: "#64748b",
   zones: "#475569",
-  fusion_links: "#ef4444",
 };
 
-const ORDER: LayerName[] = ["ships", "dark_vessels", "oil", "ais_tracks", "zones", "fusion_links"];
+const ORDER: LayerName[] = ["ships", "dark_vessels", "oil", "ais_tracks", "zones"];
 
 export default function LayerToggles({
   visible,

@@ -34,6 +34,11 @@ def test_fixture_detail_matches_contract():
     assert len(detail.explain.risk_factors) == 5
 
 
+def test_process_requires_a_file():
+    resp = client.post("/process")
+    assert resp.status_code == 422  # FastAPI validation: file is required
+
+
 def test_overlay_png_is_served():
     resp = client.get("/assets/fixture-gulf-001/overlays/gradcam_oil.png")
     assert resp.status_code == 200

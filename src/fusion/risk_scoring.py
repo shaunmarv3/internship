@@ -141,5 +141,13 @@ def build_risk_table(
         axis=1,
     )
     df["risk_label"] = df["security_risk"].apply(risk_label)
+    # Guarantee the output columns exist — zone fields (in_mpa/in_eez) are only
+    # present when flag_zone_violations ran (i.e. an --eez/--mpa was supplied);
+    # without this the select KeyError'd whenever zones were skipped.
+    for col, default in (("lon", None), ("lat", None), ("dark_vessel", False),
+                         ("matched_mmsi", None), ("vessel_type", None),
+                         ("in_mpa", False), ("in_eez", False)):
+        if col not in df.columns:
+            df[col] = default
     return df[["lon", "lat", "dark_vessel", "matched_mmsi", "vessel_type",
                "in_mpa", "in_eez", "security_risk", "env_risk", "risk_label"]].copy()

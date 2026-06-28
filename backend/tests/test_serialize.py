@@ -16,13 +16,12 @@ def _sample_inputs():
     ais = [{"coordinates": [[-90.45, 28.18], [-90.40, 28.22]], "mmsi": "367123450"}]
     zones = [{"coordinates": [[[-90.5, 28.05], [-90.1, 28.05], [-90.1, 28.45],
                               [-90.5, 28.45], [-90.5, 28.05]]], "kind": "EEZ", "name": "z"}]
-    fusion = [{"coordinates": [[-90.32, 28.285], [-90.28, 28.31]], "reason": "near slick"}]
-    return vessels, oil, ais, zones, fusion
+    return vessels, oil, ais, zones
 
 
 def test_build_layers_splits_dark_and_normal_vessels():
-    vessels, oil, ais, zones, fusion = _sample_inputs()
-    layers = build_layers(vessels, oil, ais, zones, fusion)
+    vessels, oil, ais, zones = _sample_inputs()
+    layers = build_layers(vessels, oil, ais, zones)
     assert set(layers.keys()) == set(LAYER_NAMES)
     assert len(layers["ships"]["features"]) == 1
     assert len(layers["dark_vessels"]["features"]) == 1
@@ -35,8 +34,8 @@ def test_build_layers_splits_dark_and_normal_vessels():
 
 
 def test_write_case_study_round_trips_through_contract(tmp_path):
-    vessels, oil, ais, zones, fusion = _sample_inputs()
-    layers = build_layers(vessels, oil, ais, zones, fusion)
+    vessels, oil, ais, zones = _sample_inputs()
+    layers = build_layers(vessels, oil, ais, zones)
     meta = {
         "id": "test-001", "title": "T", "sensor": "Sentinel-1",
         "acquired_utc": "2024-03-12T06:14:00Z", "bbox": [-90.6, 28.0, -90.0, 28.5],

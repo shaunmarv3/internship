@@ -1,5 +1,11 @@
 // Mirror of the backend data contract (design spec section 6).
 
+export interface SceneOverlay {
+  png: string; // asset-relative path, e.g. "mauritius/overlays/scene.png"
+  bounds: [number, number, number, number]; // [min_lon, min_lat, max_lon, max_lat]
+  v?: number; // unix timestamp added at processing time — used as cache-buster
+}
+
 export interface CaseStudySummary {
   id: string;
   title: string;
@@ -7,6 +13,7 @@ export interface CaseStudySummary {
   acquired_utc: string;
   bbox: [number, number, number, number]; // [min_lon, min_lat, max_lon, max_lat]
   summary: string;
+  scene_overlay?: SceneOverlay | null;
 }
 
 export interface Metrics {
@@ -34,8 +41,7 @@ export type LayerName =
   | "dark_vessels"
   | "oil"
   | "ais_tracks"
-  | "zones"
-  | "fusion_links";
+  | "zones";
 
 export interface CaseStudyDetail {
   meta: CaseStudySummary;

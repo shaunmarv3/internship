@@ -12,7 +12,7 @@ from typing import Any, Iterable
 Record = dict[str, Any]
 FeatureCollection = dict[str, Any]
 
-LAYER_NAMES = ["ships", "dark_vessels", "oil", "ais_tracks", "zones", "fusion_links"]
+LAYER_NAMES = ["ships", "dark_vessels", "oil", "ais_tracks", "zones"]
 
 
 def _feature(geometry: dict, properties: dict) -> dict:
@@ -43,10 +43,35 @@ def points_fc(records: Iterable[Record], prop_keys: list[str]) -> FeatureCollect
     return _fc(feats)
 
 
+def _vessel_feature(r: Record) -> dict | None:
+    """Build a GeoJSON Feature for one vessel.
+
+    Emits a Polygon (axis-aligned bounding box) when 'bbox_lonlat' is present —
+    so the dashboard can draw green/red ship outlines instead of dots.
+    Falls back to a Point for legacy records that have no bbox.
+    """
+    lon, lat = r.get("lon"), r.get("lat")
+    if lon is None or lat is None:
+        return None
+    props = _clean({
+        "matched":    r.get("matched"),
+        "mmsi":       r.get("mmsi"),
+        "type":       r.get("type"),
+        "confidence": r.get("confidence"),
+    })
+    bbox = r.get("bbox_lonlat")
+    if bbox:
+        geom: dict = {"type": "Polygon", "coordinates": [bbox]}
+    else:
+        geom = {"type": "Point", "coordinates": [float(lon), float(lat)]}
+    return _feature(geom, props)
+
+
 def vessel_layers(vessels: Iterable[Record]) -> tuple[FeatureCollection, FeatureCollection]:
     """Split vessel records into (ships, dark_vessels) by the 'dark_vessel' flag.
 
-    Each record: lon, lat, dark_vessel(bool), matched_mmsi, vessel_type, conf.
+    Each record: lon, lat, dark_vessel(bool), matched_mmsi, vessel_type, conf,
+    and optionally bbox_lonlat (5-point ring [[lon,lat],...]) for box display.
     """
     ships: list[Record] = []
     dark: list[Record] = []
@@ -58,10 +83,14 @@ def vessel_layers(vessels: Iterable[Record]) -> tuple[FeatureCollection, Feature
             "mmsi": r.get("matched_mmsi"),
             "type": r.get("vessel_type"),
             "confidence": r.get("conf", r.get("confidence")),
+            "bbox_lonlat": r.get("bbox_lonlat"),
         }
         (dark if r.get("dark_vessel") else ships).append(norm)
-    keys = ["matched", "mmsi", "type", "confidence"]
-    return points_fc(ships, keys), points_fc(dark, keys)
+
+    def _fc_vessels(records: list[Record]) -> FeatureCollection:
+        return _fc([f for r in records if (f := _vessel_feature(r)) is not None])
+
+    return _fc_vessels(ships), _fc_vessels(dark)
 
 
 def polygons_fc(polys: Iterable[Record]) -> FeatureCollection:
@@ -93,7 +122,6 @@ def build_layers(
     oil: Iterable[Record],
     ais_tracks: Iterable[Record],
     zones: Iterable[Record],
-    fusion_links: Iterable[Record],
 ) -> dict[str, FeatureCollection]:
     ships, dark = vessel_layers(vessels)
     return {
@@ -102,7 +130,6 @@ def build_layers(
         "oil": polygons_fc(oil),
         "ais_tracks": lines_fc(ais_tracks),
         "zones": polygons_fc(zones),
-        "fusion_links": lines_fc(fusion_links),
     }
 
 

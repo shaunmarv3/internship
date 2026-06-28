@@ -239,9 +239,14 @@ def match_detections_to_ais(
     results = []
 
     if ais_at_time.empty:
+        # No AIS (e.g. GFW 401/empty) -> every detection is dark. Still geocode
+        # pixel -> lon/lat here; downstream risk/zone/fusion need those columns
+        # (omitting them caused KeyError 'lon' once a scene had real detections).
         for d in detections:
-            results.append({**d, "matched_mmsi": None, "distance_m": np.nan,
-                            "vessel_type": None, "dark_vessel": True})
+            lon, lat = pixel_to_lonlat(d["scene_x"], d["scene_y"], scene_transform)
+            results.append({**d, "lon": lon, "lat": lat, "matched_mmsi": None,
+                            "distance_m": np.nan, "vessel_type": None,
+                            "dark_vessel": True})
         return pd.DataFrame(results)
 
     ais_gdf = gpd.GeoDataFrame(
@@ -283,6 +288,52 @@ def match_detections_to_ais(
 
 
 # ── Spatial zone join ─────────────────────────────────────────────────────────
+
+def apply_synthetic_ais(
+    vessels_df: pd.DataFrame,
+    fraction: float = 0.65,
+    seed: int = 42,
+    mode: str = "random",
+) -> pd.DataFrame:
+    """Designate a subset of all-dark detections as AIS-matched for demo display.
+
+    mode="random"       — random `fraction` of vessels go green, rest dark.
+    mode="all_green"    — every vessel is AIS-matched (fraction ignored).
+    mode="farthest_dark"— all green except the one ship farthest from the
+                          group centroid (most geographically isolated = dark).
+
+    Only call when ais_at_time was empty; real AIS takes precedence.
+    """
+    if vessels_df.empty:
+        return vessels_df
+    df = vessels_df.copy()
+    n  = len(df)
+    rng = np.random.default_rng(seed)
+
+    if mode == "all_green":
+        matched_idx = list(range(n))
+
+    elif mode == "farthest_dark":
+        lons = df["lon"].values.astype(float)
+        lats = df["lat"].values.astype(float)
+        cx   = float(np.nanmean(lons))
+        cy   = float(np.nanmean(lats))
+        dists = np.sqrt((lons - cx) ** 2 + (lats - cy) ** 2)
+        farthest = int(np.nanargmax(dists))
+        matched_idx = [i for i in range(n) if i != farthest]
+
+    else:  # "random"
+        if fraction <= 0:
+            return df
+        matched_idx = list(
+            rng.choice(n, size=max(1, int(round(n * fraction))), replace=False)
+        )
+
+    df.loc[matched_idx, "dark_vessel"]   = False
+    df.loc[matched_idx, "matched_mmsi"]  = [f"SYNTH{i:06d}" for i in matched_idx]
+    df.loc[matched_idx, "vessel_type"]   = "cargo"
+    return df
+
 
 def flag_zone_violations(
     vessel_df: pd.DataFrame,

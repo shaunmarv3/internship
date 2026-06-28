@@ -17,3 +17,19 @@ export async function fetchCaseStudy(id: string): Promise<CaseStudyDetail> {
 export function assetUrl(rel: string): string {
   return `${BASE}/assets/${rel}`;
 }
+
+export async function processScene(file: File): Promise<{ id: string }> {
+  const fd = new FormData();
+  fd.append("file", file);
+  const r = await fetch(`${BASE}/process`, { method: "POST", body: fd });
+  if (!r.ok) {
+    let detail = `HTTP ${r.status}`;
+    try {
+      detail = (await r.json()).detail ?? detail;
+    } catch {
+      /* non-JSON error body */
+    }
+    throw new Error(detail);
+  }
+  return r.json();
+}

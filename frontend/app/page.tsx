@@ -13,6 +13,7 @@ import CaseStudyPicker from "@/components/CaseStudyPicker";
 import LayerToggles from "@/components/LayerToggles";
 import DetailPanel from "@/components/DetailPanel";
 import MetricsStrip from "@/components/MetricsStrip";
+import UploadScene from "@/components/UploadScene";
 
 const MapView = dynamic(() => import("@/components/MapView"), { ssr: false });
 
@@ -22,7 +23,6 @@ const ALL_LAYERS: LayerName[] = [
   "oil",
   "ais_tracks",
   "zones",
-  "fusion_links",
 ];
 
 function TopBar({ detail }: { detail: CaseStudyDetail | null }) {
@@ -81,6 +81,13 @@ export default function Page() {
     [],
   );
 
+  const handleUploaded = useCallback((id: string) => {
+    fetchCaseStudies().then((s) => {
+      setStudies(s);
+      setActiveId(id);
+    });
+  }, []);
+
   return (
     <div className="flex h-screen flex-col">
       <TopBar detail={detail} />
@@ -91,6 +98,7 @@ export default function Page() {
             activeId={activeId}
             onSelect={setActiveId}
           />
+          <UploadScene onUploaded={handleUploaded} />
           <LayerToggles visible={visible} onToggle={toggle} />
         </aside>
 

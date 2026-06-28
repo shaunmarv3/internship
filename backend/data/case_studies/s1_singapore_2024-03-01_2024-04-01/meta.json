@@ -1,0 +1,23 @@
+{
+  "id": "s1_singapore_2024-03-01_2024-04-01",
+  "title": "s1_singapore_2024-03-01_2024-04-01",
+  "sensor": "Sentinel-1",
+  "acquired_utc": "2026-06-28T12:04:04Z",
+  "bbox": [
+    103.7785,
+    1.2155,
+    103.9217,
+    1.342
+  ],
+  "summary": "0 slick(s), 0 dark vessel(s).",
+  "scene_overlay": {
+    "png": "s1_singapore_2024-03-01_2024-04-01/overlays/scene.png",
+    "bounds": [
+      103.778502,
+      1.197993,
+      103.921693,
+      1.341993
+    ],
+    "v": 1782648259
+  }
+}
