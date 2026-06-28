@@ -1,0 +1,22 @@
+{
+  "gradcam_oil_png": "mauritius_sea/overlays/gradcam_oil.png",
+  "gradcam_ship_png": null,
+  "risk_factors": [
+    {
+      "label": "AIS signal absence",
+      "weight": 0.615
+    },
+    {
+      "label": "Restricted-area presence",
+      "weight": 0.077
+    },
+    {
+      "label": "Proximity to slick",
+      "weight": 0.308
+    },
+    {
+      "label": "Slick size",
+      "weight": 0.0
+    }
+  ]
+}

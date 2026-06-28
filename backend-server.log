@@ -1,0 +1,70 @@
+INFO:     Started server process [7256]
+INFO:     Waiting for application startup.
+INFO:     Application startup complete.
+INFO:     Uvicorn running on http://127.0.0.1:8000 (Press CTRL+C to quit)
+INFO:     127.0.0.1:49675 - "GET /case-study/mauritius HTTP/1.1" 200 OK
+INFO:     127.0.0.1:65260 - "GET /case-studies HTTP/1.1" 200 OK
+INFO:     127.0.0.1:65260 - "GET /case-study/fixture-gulf-001 HTTP/1.1" 200 OK
+INFO:     127.0.0.1:50553 - "GET /assets/fixture-gulf-001/overlays/gradcam_ship.png HTTP/1.1" 304 Not Modified
+INFO:     127.0.0.1:56399 - "GET /assets/fixture-gulf-001/overlays/gradcam_oil.png HTTP/1.1" 304 Not Modified
+INFO:     127.0.0.1:65260 - "GET /case-studies HTTP/1.1" 200 OK
+INFO:     127.0.0.1:61950 - "GET /case-studies HTTP/1.1" 200 OK
+INFO:     127.0.0.1:61950 - "GET /case-study/fixture-gulf-001 HTTP/1.1" 200 OK
+INFO:     127.0.0.1:65260 - "GET /case-study/fixture-gulf-001 HTTP/1.1" 200 OK
+INFO:     127.0.0.1:53564 - "GET /case-study/mauritius HTTP/1.1" 200 OK
+INFO:     127.0.0.1:64835 - "GET /assets/mauritius/overlays/scene.png HTTP/1.1" 200 OK
+INFO:     127.0.0.1:58546 - "GET /case-studies HTTP/1.1" 200 OK
+INFO:     127.0.0.1:58546 - "GET /case-study/fixture-gulf-001 HTTP/1.1" 200 OK
+[transformers] You passed `num_labels=2` which is incompatible to the `id2label` map of length `1000`.
+Scene: mauritius.tif  shape=(2, 1336, 1671)  range=[-60.00, 18.57]  nodata=None  format=dB
+  band 0: dB → converted to linear
+  band 1: dB → converted to linear
+→ 12 chips saved to D:\larplarplarpsahur\backend\data\uploads\mauritius_chips
+[GFW fetch warning] 401 Client Error: Unauthorized for url: https://gateway.api.globalfishingwatch.org/v3/events?types%5B0%5D=GAP&datasets%5B0%5D=public-global-gaps-events%3Alatest&start-date=2026-06-26&end-date=2026-06-26&limit=500&offset=0
+Loading weights:   0%|          | 0/1156 [00:00<?, ?it/s]Loading weights: 100%|██████████| 1156/1156 [00:00<00:00, 33485.84it/s]
+[transformers] [1mSegformerForSemanticSegmentation LOAD REPORT[0m from: nvidia/mit-b5
+Key                                                     | Status     | 
+--------------------------------------------------------+------------+-
+classifier.bias                                         | UNEXPECTED | 
+classifier.weight                                       | UNEXPECTED | 
+decode_head.batch_norm.weight                           | MISSING    | 
+decode_head.linear_projections.{0, 1, 2, 3}.proj.bias   | MISSING    | 
+decode_head.linear_projections.{0, 1, 2, 3}.proj.weight | MISSING    | 
+decode_head.batch_norm.num_batches_tracked              | MISSING    | 
+decode_head.batch_norm.bias                             | MISSING    | 
+decode_head.classifier.weight                           | MISSING    | 
+decode_head.linear_fuse.weight                          | MISSING    | 
+decode_head.batch_norm.running_var                      | MISSING    | 
+decode_head.batch_norm.running_mean                     | MISSING    | 
+decode_head.classifier.bias                             | MISSING    | 
+
+Notes:
+- UNEXPECTED:	can be ignored when loading from different task/architecture; not ok if you expect identical arch.
+- MISSING:	those params were newly initialized because missing from the checkpoint. Consider training on your downstream task.
+[transformers] You passed `num_labels=2` which is incompatible to the `id2label` map of length `1000`.
+Loading weights:   0%|          | 0/1156 [00:00<?, ?it/s]Loading weights: 100%|██████████| 1156/1156 [00:00<00:00, 23897.75it/s]
+[transformers] [1mSegformerForSemanticSegmentation LOAD REPORT[0m from: nvidia/mit-b5
+Key                                                     | Status     | 
+--------------------------------------------------------+------------+-
+classifier.bias                                         | UNEXPECTED | 
+classifier.weight                                       | UNEXPECTED | 
+decode_head.batch_norm.weight                           | MISSING    | 
+decode_head.linear_projections.{0, 1, 2, 3}.proj.bias   | MISSING    | 
+decode_head.linear_projections.{0, 1, 2, 3}.proj.weight | MISSING    | 
+decode_head.batch_norm.num_batches_tracked              | MISSING    | 
+decode_head.batch_norm.bias                             | MISSING    | 
+decode_head.classifier.weight                           | MISSING    | 
+decode_head.linear_fuse.weight                          | MISSING    | 
+decode_head.batch_norm.running_var                      | MISSING    | 
+decode_head.batch_norm.running_mean                     | MISSING    | 
+decode_head.classifier.bias                             | MISSING    | 
+
+Notes:
+- UNEXPECTED:	can be ignored when loading from different task/architecture; not ok if you expect identical arch.
+- MISSING:	those params were newly initialized because missing from the checkpoint. Consider training on your downstream task.
+[gradcam warning] too many indices for tensor of dimension 3
+Wrote case study -> D:\larplarplarpsahur\backend\data\case_studies\mauritius
+INFO:     127.0.0.1:58546 - "POST /process HTTP/1.1" 200 OK
+INFO:     127.0.0.1:58546 - "GET /case-studies HTTP/1.1" 200 OK
+INFO:     127.0.0.1:58546 - "GET /case-study/mauritius HTTP/1.1" 200 OK
+INFO:     127.0.0.1:58546 - "GET /assets/mauritius/overlays/scene.png HTTP/1.1" 200 OK

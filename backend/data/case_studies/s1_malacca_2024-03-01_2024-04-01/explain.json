@@ -1,0 +1,22 @@
+{
+  "gradcam_oil_png": "s1_malacca_2024-03-01_2024-04-01/overlays/gradcam_oil.png",
+  "gradcam_ship_png": null,
+  "risk_factors": [
+    {
+      "label": "AIS signal absence",
+      "weight": 0.615
+    },
+    {
+      "label": "Restricted-area presence",
+      "weight": 0.077
+    },
+    {
+      "label": "Proximity to slick",
+      "weight": 0.307
+    },
+    {
+      "label": "Slick size",
+      "weight": 0.001
+    }
+  ]
+}

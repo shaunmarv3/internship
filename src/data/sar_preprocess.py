@@ -70,12 +70,18 @@ def lee_filter(band: np.ndarray, window: int = 7) -> np.ndarray:
 
 # ── Normalisation ──────────────────────────────────────────────────────────────
 
-def normalize_band(band: np.ndarray, clip_pct: float = 99.5) -> np.ndarray:
+def normalize_band(band: np.ndarray, clip_pct: float = 99.5,
+                   valid: Optional[np.ndarray] = None) -> np.ndarray:
     """
     Clip at clip_pct percentile (removes bright ship/infra hotspots that
     would compress the sea background dynamic range), then scale to [0, 1].
+
+    `valid`: optional H×W bool mask — the percentile is computed over valid
+    pixels only, so NODATA fill (common in partial-coverage GEE/reprojected
+    scenes) doesn't dominate the statistics and saturate the real data.
     """
-    hi = float(np.percentile(band, clip_pct))
+    sample = band[valid] if (valid is not None and valid.any()) else band
+    hi = float(np.percentile(sample, clip_pct))
     if hi <= 0:
         return np.zeros_like(band, dtype=np.float32)
     return np.clip(band / hi, 0.0, 1.0).astype(np.float32)
@@ -83,24 +89,46 @@ def normalize_band(band: np.ndarray, clip_pct: float = 99.5) -> np.ndarray:
 
 # ── Core band preprocessing ────────────────────────────────────────────────────
 
-def preprocess_sar_bands(raw: np.ndarray, verbose: bool = False) -> np.ndarray:
+def preprocess_sar_bands(raw: np.ndarray, verbose: bool = False,
+                         nodata: Optional[float] = None) -> np.ndarray:
     """
     Full preprocessing for C×H×W float32 SAR array.
     Returns C×H×W float32 in [0,1].
+
+    `nodata`: fill value (e.g. 0.0 for GEE/reprojected scenes). A pixel is
+    treated as NODATA only where ALL bands equal it. NODATA is excluded from
+    normalisation stats, neutralised before the Lee filter so the bright/dark
+    fill doesn't bleed across the swath edge, and set to 0 in the output so
+    empty tiles fall below `min_signal` and get skipped (instead of being fed
+    to the models as saturated-white tiles → 0 detections).
     """
+    if nodata is not None:
+        valid = ~np.all(np.isclose(raw, nodata), axis=0)   # H×W
+    else:
+        valid = np.ones(raw.shape[1:], dtype=bool)
+    if verbose and not valid.all():
+        print(f"  nodata={nodata}: {(~valid).mean()*100:.1f}% of scene is fill "
+              f"(excluded from normalisation)")
+
     out = np.zeros_like(raw, dtype=np.float32)
     for c in range(raw.shape[0]):
         band = raw[c].astype(np.float32)
-        fmt  = detect_pixel_format(band)
+        fmt  = detect_pixel_format(band[valid] if valid.any() else band)
         if fmt == "db":
             band = db_to_linear(band)
             if verbose:
-                print(f"  band {c}: dB → converted to linear")
+                print(f"  band {c}: dB -> converted to linear")
         else:
             if verbose:
                 print(f"  band {c}: already linear")
-        band  = lee_filter(band)
-        out[c] = normalize_band(band)
+        # neutralise fill to the valid-region median so the Lee filter (a local
+        # mean) doesn't smear fill into real pixels at the swath boundary.
+        if not valid.all() and valid.any():
+            band = np.where(valid, band, float(np.median(band[valid])))
+        band   = lee_filter(band)
+        normed = normalize_band(band, valid=valid)
+        normed[~valid] = 0.0
+        out[c] = normed
     return out
 
 
@@ -120,13 +148,31 @@ def chip_preprocessed(
     out_dir = Path(out_dir)
     out_dir.mkdir(parents=True, exist_ok=True)
 
+    # Pad scenes smaller than one chip (else no tile fits → 0 detections).
+    _, H0, W0 = data.shape
+    if H0 < chip_size or W0 < chip_size:
+        pad_h = max(0, chip_size - H0)
+        pad_w = max(0, chip_size - W0)
+        data = np.pad(data, ((0, 0), (0, pad_h), (0, pad_w)), mode="reflect")
+
     _, H, W = data.shape
     stride   = chip_size - overlap
     chips    = []
     idx      = 0
 
-    for y in range(0, H - chip_size + 1, stride):
-        for x in range(0, W - chip_size + 1, stride):
+    # Edge-flush positions: stride the scene, then always append a final tile
+    # clamped to (size-chip) so the bottom/right margin is covered. Previously
+    # range(0, H-chip+1, stride) dropped everything past the first tile on
+    # scenes only slightly larger than a chip → whole SE of the scene unseen.
+    def _starts(extent: int) -> list[int]:
+        pts = list(range(0, max(1, extent - chip_size + 1), stride))
+        last = max(0, extent - chip_size)
+        if pts[-1] != last:
+            pts.append(last)
+        return pts
+
+    for y in _starts(H):
+        for x in _starts(W):
             chip = data[:, y:y+chip_size, x:x+chip_size]
             if chip.mean() < min_signal:
                 continue
@@ -135,7 +181,10 @@ def chip_preprocessed(
             if chip.shape[0] == 1:
                 rgb = np.repeat(chip, 3, axis=0)
             elif chip.shape[0] == 2:
-                rgb = np.concatenate([chip, chip[:1]], axis=0)
+                # Duplicate the strong oil band (band 1 = VH, ~9 dB signal) so the
+                # 3-ch input matches training's [VV, VH, VH] (loaders._load_image).
+                # Duplicating band 0 (VV) here was a train/serve skew → oil=0.
+                rgb = np.concatenate([chip, chip[1:2]], axis=0)
             else:
                 rgb = chip[:3]
 
@@ -181,22 +230,65 @@ def preprocess_sar_tif(
         raw       = src.read().astype(np.float32)
         transform = src.transform
         crs       = src.crs
+        nodata    = src.nodata
 
     if verbose:
         print(f"Scene: {Path(tif_path).name}  shape={raw.shape}  "
-              f"range=[{raw.min():.2f}, {raw.max():.2f}]  "
+              f"range=[{raw.min():.2f}, {raw.max():.2f}]  nodata={nodata}  "
               f"format={'dB' if raw.min() < -5 else 'linear'}")
 
-    processed = preprocess_sar_bands(raw, verbose=verbose)
+    processed = preprocess_sar_bands(raw, verbose=verbose, nodata=nodata)
     chips = chip_preprocessed(processed, tif_path, out_dir,
                                chip_size, overlap, min_signal, transform, crs)
 
     if verbose:
-        print(f"→ {len(chips)} chips saved to {out_dir}")
+        print(f"-> {len(chips)} chips saved to {out_dir}")
     return chips
 
 
 # ── GEE live pull ──────────────────────────────────────────────────────────────
+
+def list_gee_scenes(bbox: list, date_start: str, date_end: str) -> list:
+    """
+    List Sentinel-1 IW scenes intersecting `bbox` in [date_start, date_end), with
+    the fraction of the bbox each one covers — so you can pick a date whose swath
+    actually covers the target (a partial granule → mostly-NODATA pull → 0 detections).
+
+    Returns a list of dicts sorted by coverage desc: {date, orbit, cov, id}.
+    NOTE: EE `filterDate` end is EXCLUSIVE — use a window of at least a few days
+    (S1 revisits a given spot only every ~6-12 days).
+    """
+    try:
+        import ee
+    except ImportError:
+        raise ImportError("Run: pip install earthengine-api geemap")
+
+    west, south, east, north = bbox
+    roi = ee.Geometry.Rectangle([west, south, east, north])
+    roi_area = roi.area(1)
+    col = (
+        ee.ImageCollection("COPERNICUS/S1_GRD")
+        .filterBounds(roi)
+        .filterDate(date_start, date_end)
+        .filter(ee.Filter.eq("instrumentMode", "IW"))
+        .filter(ee.Filter.listContains("transmitterReceiverPolarisation", "VV"))
+        .sort("system:time_start")
+    )
+
+    def _feat(img):
+        cov = img.geometry().intersection(roi, 1).area(1).divide(roi_area)
+        return ee.Feature(None, {
+            "date": img.date().format("YYYY-MM-dd"),
+            "orbit": img.get("orbitProperties_pass"),
+            "cov": cov,
+            "id": img.get("system:index"),
+        })
+
+    feats = ee.FeatureCollection(col.map(_feat)).getInfo()["features"]
+    rows = [f["properties"] for f in feats]
+    rows.sort(key=lambda r: r.get("cov", 0), reverse=True)
+    return rows
+
 
 def fetch_gee_scene(
     bbox: list,
@@ -237,18 +329,46 @@ def fetch_gee_scene(
         raise ValueError(f"No Sentinel-1 IW scenes found for bbox={bbox} "
                          f"between {date_start} and {date_end}")
 
-    image     = col.first()
-    date_acq  = image.date().format("YYYY-MM-dd").getInfo()
-    band_names = image.bandNames().getInfo()
-    bands     = ["VV", "VH"] if "VH" in band_names else ["VV"]
-    image     = image.select(bands).clip(roi)
+    # `.first()` is a single granule; filterBounds only requires INTERSECTION,
+    # so an edge-clipping granule leaves most of the bbox as NODATA fill (seen
+    # on Mauritius: 96% empty → 0 detections). Mosaic every granule in the
+    # window so adjacent passes fill the bbox. Report the most-recent date.
+    most_recent = col.first()
+    date_acq    = most_recent.date().format("YYYY-MM-dd").getInfo()
+    band_names  = most_recent.bandNames().getInfo()
+    bands       = ["VV", "VH"] if "VH" in band_names else ["VV"]
+    image       = col.select(bands).mosaic().clip(roi)
 
-    print(f"GEE: scene dated {date_acq}, bands={bands}")
+    print(f"GEE: most-recent scene dated {date_acq}, "
+          f"{col.size().getInfo()} granule(s) mosaicked, bands={bands}")
     Path(out_tif).parent.mkdir(parents=True, exist_ok=True)
     geemap.ee_export_image(image, filename=out_tif, scale=scale_m, region=roi,
-                           file_per_band=False)
-    print(f"GEE export → {out_tif}")
+                           crs="EPSG:4326", file_per_band=False)
+
+    # Coverage check: a sliver pull silently produces 0 detections downstream.
+    # Fail loudly so the user re-pulls with a better date/bbox instead.
+    cov = _valid_coverage(out_tif)
+    if cov is not None:
+        print(f"GEE export -> {out_tif}  (valid-data coverage {cov*100:.0f}%)")
+        if cov < 0.4:
+            print(f"  WARNING: only {cov*100:.0f}% of the bbox has Sentinel-1 data — "
+                  "the swath barely overlaps this bbox. Detections will be near-zero. "
+                  "Try a different --start/--end (a pass that covers the area) or a "
+                  "smaller --bbox that fits inside one swath.")
+    else:
+        print(f"GEE export -> {out_tif}")
     return out_tif
+
+
+def _valid_coverage(tif_path: str) -> Optional[float]:
+    """Fraction of pixels with real (non-NODATA) data; None if unreadable."""
+    try:
+        with rasterio.open(tif_path) as src:
+            a = src.read().astype(np.float32)
+            nd = src.nodata if src.nodata is not None else 0.0
+        return float((~np.all(np.isclose(a, nd), axis=0)).mean())
+    except Exception:
+        return None
 
 
 # ── End-to-end: GEE → chips ───────────────────────────────────────────────────

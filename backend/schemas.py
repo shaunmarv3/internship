@@ -4,6 +4,12 @@ from __future__ import annotations
 from pydantic import BaseModel, Field
 
 
+class SceneOverlay(BaseModel):
+    """Georeferenced Sentinel-1 scene preview (PNG) for display under the vector layers."""
+    png: str                                                # asset-relative path: "<id>/overlays/scene.png"
+    bounds: list[float] = Field(min_length=4, max_length=4)  # [min_lon, min_lat, max_lon, max_lat]
+
+
 class CaseStudySummary(BaseModel):
     id: str
     title: str
@@ -14,7 +20,8 @@ class CaseStudySummary(BaseModel):
 
 
 class CaseStudyMeta(CaseStudySummary):
-    """Same shape as the summary; lives in each case study's meta.json."""
+    """Same shape as the summary, plus the optional georeferenced scene preview."""
+    scene_overlay: SceneOverlay | None = None
 
 
 class Metrics(BaseModel):

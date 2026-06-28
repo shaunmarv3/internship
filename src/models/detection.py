@@ -39,12 +39,15 @@ def chip_sar_scene(
                 window = Window(x, y, chip_size, chip_size)
                 data = src.read(window=window).astype(np.float32)   # C×H×W
 
-                # normalize
+                # dB-window normalization — matches GEE getThumbURL display and HRSID
+                # appearance (dark sea, bright ships). Per-chip min-max stretches
+                # every chip to 0-255 including pure-sea chips → sea looks gray →
+                # YOLO gets wrong input distribution and scores near-zero confidence.
+                # VH (band index 1): -30..-10 dB  |  VV / anything else: -25..0 dB
+                DB_WINDOWS = [(-25.0, 0.0), (-30.0, -10.0)]
                 for c in range(data.shape[0]):
-                    b = data[c]
-                    vmin, vmax = b.min(), b.max()
-                    if vmax > vmin:
-                        data[c] = (b - vmin) / (vmax - vmin)
+                    lo, hi = DB_WINDOWS[min(c, len(DB_WINDOWS) - 1)]
+                    data[c] = np.clip((data[c] - lo) / (hi - lo), 0.0, 1.0)
 
                 # skip near-empty tiles
                 if data.mean() < min_brightness:
@@ -54,7 +57,10 @@ def chip_sar_scene(
                 if data.shape[0] == 1:
                     rgb = np.repeat(data, 3, axis=0)
                 elif data.shape[0] == 2:
-                    rgb = np.concatenate([data, data[:1]], axis=0)
+                    # [VV, VH, VH] — duplicate VH (cleanest ship-vs-sea contrast,
+                    # near-black sea) rather than VV. Ships are pol-robust so this is
+                    # immaterial for detection, but keeps both pipelines consistent.
+                    rgb = np.concatenate([data, data[1:2]], axis=0)
                 else:
                     rgb = data[:3]
 
@@ -66,7 +72,7 @@ def chip_sar_scene(
                                "scene": scene_path, "chip_size": chip_size})
                 chip_idx += 1
 
-    print(f"Chipped {scene_path} → {chip_idx} tiles in {out_dir}")
+    print(f"Chipped {scene_path} -> {chip_idx} tiles in {out_dir}")
     return chips
 
 
@@ -116,21 +122,46 @@ class SARVesselDetector:
         chips: list,
         scene_width: int,
         scene_height: int,
+        infer_imgsz: int = 1024,
     ) -> list:
         """
         Run inference on all chips from one scene.
         Returns list of dicts: {x, y, w, h, conf, cls} in scene-level pixel coords.
+
+        infer_imgsz: YOLO input size during inference. Default 1024 upsamples the 512px
+        chip 2× before the network sees it — makes ~10px ships at 10m/px appear as ~20px,
+        reducing the training/inference resolution gap (HRSID 0.5-3m vs GEE 10m).
         """
         detections = []
         for chip in chips:
-            results = self.model(chip["path"], conf=self.conf_thresh, verbose=False)
+            results = self.model(chip["path"], conf=self.conf_thresh,
+                                 imgsz=infer_imgsz, verbose=False)
+            ox, oy = chip["x"], chip["y"]
             for r in results:
+                # Oriented-box model (YOLO11m-OBB): use rotated-box centre + size.
+                obb = getattr(r, "obb", None)
+                if obb is not None and obb.xywhr is not None and len(obb.xywhr):
+                    xywhr = obb.xywhr.cpu().numpy()    # cx, cy, w, h, angle (chip coords)
+                    confs = obb.conf.cpu().numpy()
+                    clss  = obb.cls.cpu().numpy().astype(int)
+                    for (cx, cy, w, h, _ang), conf, cls in zip(xywhr, confs, clss):
+                        detections.append({
+                            "scene_x": ox + float(cx),
+                            "scene_y": oy + float(cy),
+                            "width_px":  float(w),
+                            "height_px": float(h),
+                            "conf": float(conf),
+                            "class": int(cls),
+                            "class_name": self.CLASS_NAMES[cls] if cls < len(self.CLASS_NAMES) else "vessel",
+                        })
+                    continue
+
+                # Horizontal-box model (YOLOv8m / YOLO26m).
                 if r.boxes is None:
                     continue
                 boxes = r.boxes.xyxy.cpu().numpy()   # chip-level coords
                 confs = r.boxes.conf.cpu().numpy()
                 clss  = r.boxes.cls.cpu().numpy().astype(int)
-                ox, oy = chip["x"], chip["y"]
                 for (x1, y1, x2, y2), conf, cls in zip(boxes, confs, clss):
                     detections.append({
                         "scene_x": ox + (x1 + x2) / 2,
@@ -144,6 +175,96 @@ class SARVesselDetector:
         # deduplicate overlapping chips with NMS
         detections = _scene_nms(detections, iou_thresh=0.5)
         return detections
+
+
+def cfar_detect(
+    scene_path: str,
+    guard: int = 5,
+    train: int = 20,
+    alpha: float = 20.0,
+) -> list:
+    """
+    CA-CFAR (Cell-Averaging Constant False Alarm Rate) detector.
+    Resolution-agnostic — adapts to local sea clutter at any pixel scale.
+    At Sentinel-1 IW 10m/px outperforms HRSID-trained YOLO in recall.
+
+    Returns same format as SARVesselDetector.detect_scene() so it's a
+    drop-in: list of {scene_x, scene_y, width_px, height_px, conf, class}.
+    """
+    import scipy.ndimage as ndi
+
+    with rasterio.open(scene_path) as src:
+        H, W = src.height, src.width
+        if src.count >= 2:
+            # For dual-pol TIFs (VV=band1, VH=band2): pick VH — darker sea gives
+            # higher ship-to-clutter ratio. Identify it as the band with lower mean.
+            bands = [src.read(i + 1).astype(np.float32) for i in range(min(src.count, 2))]
+            valid = [np.nanmean(np.where(b < -50, np.nan, b)) for b in bands]
+            db = bands[int(np.argmin(valid))]   # lowest mean dB = VH
+        else:
+            db = src.read(1).astype(np.float32)
+
+    db  = np.where(db < -50, np.nan, db)
+    lin = np.nan_to_num(10 ** (db / 10.0), 0.0)
+
+    total_w, guard_w = train * 2 + 1, guard * 2 + 1
+    tm = ndi.uniform_filter(lin, total_w)
+    gm = ndi.uniform_filter(lin, guard_w)
+    clutter = np.maximum(
+        (tm * total_w**2 - gm * guard_w**2) / (total_w**2 - guard_w**2),
+        1e-10,
+    )
+    det = (lin > alpha * clutter).astype(np.uint8)
+
+    import cv2
+
+    # Water mask: suppress land detections at source.
+    # SAR VH sea backscatter < -14 dB; land/urban > -14 dB across all scene types.
+    # Opening (61px ≈ 610m) removes ship-sized bright spots from the land candidate,
+    # keeping only solid land blobs. Dilation (30px ≈ 300m) adds a coastal buffer.
+    # Without this, CFAR fires freely on buildings/roads (buildings ARE 20× brighter
+    # than adjacent structures), producing hundreds of land FP in urban scenes.
+    _land_cand = np.where(np.isnan(db), 0, (db >= -18.0).astype(np.uint8))
+    _k61 = cv2.getStructuringElement(cv2.MORPH_ELLIPSE, (61, 61))
+    _k10 = cv2.getStructuringElement(cv2.MORPH_ELLIPSE, (10, 10))
+    _land = cv2.dilate(cv2.morphologyEx(_land_cand, cv2.MORPH_OPEN, _k61), _k10)
+    water = (_land == 0) & (~np.isnan(db))
+    det = (det & water.astype(np.uint8))
+
+    # Filter on UNDILATED blob size — dilation inflates every pixel to ~63px²
+    # making post-dilation area filtering useless. Pre-dilation: speckle=1px
+    # isolated, real ships=cluster of multiple pixels. min_det_px=14 empirically
+    # tuned on Mumbai 10m/px scene (37m minimum ship size).
+    min_det_px = 14
+    _, det_lbl, det_stats, _ = cv2.connectedComponentsWithStats(det)
+    det_filtered = np.zeros_like(det)
+    for i in range(1, len(det_stats)):
+        if det_stats[i, cv2.CC_STAT_AREA] >= min_det_px:
+            det_filtered[det_lbl == i] = 1
+
+    k9  = cv2.getStructuringElement(cv2.MORPH_ELLIPSE, (9, 9))
+    mrg = cv2.dilate(det_filtered, k9)
+    _, _, stats, cents = cv2.connectedComponentsWithStats(mrg)
+
+    detections = []
+    for i, (cx, cy) in enumerate(cents[1:], 1):
+        cx, cy = int(cx), int(cy)
+        if not (0 <= cy < H and 0 <= cx < W):
+            continue
+        # confidence proxy: peak SCR in the blob (capped at 1.0)
+        conf = min(float(lin[cy, cx] / (clutter[cy, cx] + 1e-10)) / alpha, 1.0)
+        sz   = max(int(stats[i, cv2.CC_STAT_AREA] ** 0.5), 3)
+        detections.append({
+            "scene_x":   float(cx),
+            "scene_y":   float(cy),
+            "width_px":  float(sz),
+            "height_px": float(sz),
+            "conf":      conf,
+            "class":     0,
+            "class_name": "ship",
+            "detector":  "cfar",
+        })
+    return detections
 
 
 def _scene_nms(detections: list, iou_thresh: float = 0.5) -> list:

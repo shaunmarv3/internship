@@ -35,11 +35,15 @@ def segment_scene(
     num_classes: int = 2,
     oil_class: int = 1,
     device: str | None = None,
+    oil_threshold: float = 0.5,
 ) -> np.ndarray:
     """
     Run SegFormer on every chip and stitch into a full-scene oil mask.
 
     chips: list of {path, x, y, chip_size} (from sar_preprocess.chip_preprocessed).
+    oil_threshold: a pixel is oil if P(oil) > threshold. argmax (0.5) makes the
+        model UNDER-predict oil (val sweep: recall only ~51% at 0.5, optimal ~0.30);
+        lower it to surface subtle slicks at the cost of more look-alike false alarms.
     Returns: H×W uint8 scene mask (oil_class where oil predicted, else 0).
     """
     import torch
@@ -47,8 +51,12 @@ def segment_scene(
     from src.models.segmentation import build_segmentation_model
 
     device = device or ("cuda" if torch.cuda.is_available() else "cpu")
-    model = build_segmentation_model(model_type="segformer", num_classes=num_classes, backbone=backbone)
     state = torch.load(checkpoint, map_location=device)
+    # prefer the backbone the checkpoint was trained with (stored in its args)
+    ckpt_backbone = (state.get("args") or {}).get("backbone") if isinstance(state, dict) else None
+    model = build_segmentation_model(
+        model_type="segformer", num_classes=num_classes, backbone=ckpt_backbone or backbone
+    )
     model.load_state_dict(state.get("model_state", state))
     model.to(device).eval()
 
@@ -60,14 +68,16 @@ def segment_scene(
     with torch.no_grad():
         for c in chips:
             t = _chip_tensor(c["path"]).to(device)
-            logits = model(t)  # 1×num_classes×h×w
-            pred = logits.argmax(dim=1)[0].cpu().numpy().astype(np.uint8)  # h×w
+            out = model(t)  # 1×num_classes×h×w (tensor or HF output)
+            logits = out.logits if hasattr(out, "logits") else out
+            prob = torch.softmax(logits, dim=1)[0, oil_class]  # h×w P(oil)
+            pred = (prob > oil_threshold).cpu().numpy().astype(np.uint8)  # h×w
             if pred.shape != (chip_size, chip_size):
                 pred = cv2.resize(pred, (chip_size, chip_size), interpolation=cv2.INTER_NEAREST)
             y, x = c["y"], c["x"]
             # OR-merge overlaps: keep oil if any chip predicts oil
             region = scene[y:y + chip_size, x:x + chip_size]
-            oil_here = (pred == oil_class).astype(np.uint8) * oil_class
+            oil_here = pred * oil_class
             scene[y:y + chip_size, x:x + chip_size] = np.maximum(region, oil_here)
 
     return scene

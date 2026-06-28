@@ -1,0 +1,26 @@
+# Inference deps for running backend/pipeline/run_scene.py + the /process endpoint
+# (the backend host that serves /process needs these + the HF checkpoints).
+#
+#   pip install -r requirements-pipeline.txt
+#
+# NOTE: the SegFormer checkpoints on HF were trained with the NEW transformers SegFormer
+# layout (model.segformer.stages.*, attention.q_proj/k_proj/v_proj/o_proj,
+# decode_head.linear_projections). The installed transformers MUST emit that same layout
+# or load_state_dict fails. That layout is in transformers >= 5. If a load_state_dict key
+# mismatch appears, match this version to whatever was used at training time.
+
+torch>=2.2
+torchvision>=0.17
+transformers>=5
+segmentation-models-pytorch>=0.3.3
+ultralytics>=8.3
+rasterio>=1.3
+geopandas>=0.14
+shapely>=2.0
+opencv-python>=4.9
+grad-cam>=1.5
+earthengine-api>=0.1.380
+geemap>=0.32
+requests>=2.31
+numpy>=1.24
+pandas>=2.0

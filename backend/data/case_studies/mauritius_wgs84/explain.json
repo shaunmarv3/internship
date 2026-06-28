@@ -1,0 +1,22 @@
+{
+  "gradcam_oil_png": null,
+  "gradcam_ship_png": null,
+  "risk_factors": [
+    {
+      "label": "AIS signal absence",
+      "weight": 0.333
+    },
+    {
+      "label": "Restricted-area presence",
+      "weight": 0.333
+    },
+    {
+      "label": "Proximity to slick",
+      "weight": 0.333
+    },
+    {
+      "label": "Slick size",
+      "weight": 0.0
+    }
+  ]
+}

@@ -1,0 +1,23 @@
+{
+  "id": "mauritius_wgs84",
+  "title": "mauritius_wgs84",
+  "sensor": "Sentinel-1",
+  "acquired_utc": "2026-06-27T07:34:38Z",
+  "bbox": [
+    57.5491,
+    -20.5513,
+    57.6929,
+    -20.3488
+  ],
+  "summary": "0 slick(s), 0 dark vessel(s).",
+  "scene_overlay": {
+    "png": "mauritius_wgs84/overlays/scene.png",
+    "bounds": [
+      57.649922,
+      -20.500004,
+      57.800031,
+      -20.379989
+    ],
+    "v": 1782628716
+  }
+}

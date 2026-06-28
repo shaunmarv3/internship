@@ -13,11 +13,29 @@ from pytorch_grad_cam.utils.image import show_cam_on_image
 
 
 def get_target_layer(model, model_type: str = "segformer"):
-    """Return the last conv/attention layer suitable for Grad-CAM."""
+    """Return the last conv/attention layer suitable for Grad-CAM.
+
+    For SegFormer the best target is decode_head.classifier — it is a Conv2d that
+    maps 256 fused decoder features -> num_classes, so its INPUT activations are
+    4D (B×256×H/4×W/4). Targeting encoder LayerNorm gives 3D token sequences
+    which confuse pytorch-grad-cam (needs a reshape_transform). Decoder conv
+    gives spatial maps directly, no reshape needed.
+    """
     if model_type == "segformer":
-        return [model.model.segformer.encoder.block[-1][-1].layer_norm_1]
+        # prefer decode_head.classifier (4D spatial — most reliable)
+        hf_model = getattr(model, "model", model)
+        dh = getattr(hf_model, "decode_head", None)
+        if dh is not None:
+            clf = getattr(dh, "classifier", None) or getattr(dh, "linear_pred", None)
+            if clf is not None:
+                return [clf]
+        # fallback: encoder's last LayerNorm (3D tokens — may not render perfectly)
+        seg = getattr(hf_model, "segformer", hf_model)
+        if hasattr(seg, "stages"):
+            return [seg.stages[-1].blocks[-1].layernorm_after]
+        if hasattr(seg, "encoder") and hasattr(seg.encoder, "block"):
+            return [seg.encoder.block[-1][-1].layer_norm_1]
     elif model_type in ("unet", "deeplabv3+"):
-        # SMP models: last decoder block
         return [model.model.decoder.blocks[-1]]
     return [list(model.modules())[-3]]
 
@@ -27,7 +45,13 @@ def segmentation_target(class_idx: int):
     class SegTarget:
         def __init__(self, ci): self.ci = ci
         def __call__(self, output):
-            return output[:, self.ci, :, :].mean()
+            # pytorch-grad-cam >= 1.5 iterates over the batch, passing one
+            # per-sample tensor (C×H×W, 3D) rather than the full batch (4D).
+            if output.dim() == 4:
+                return output[:, self.ci, :, :].mean()
+            if output.dim() == 3:
+                return output[self.ci].mean()   # per-sample C×H×W
+            return output.mean()
     return [SegTarget(class_idx)]
 
 
