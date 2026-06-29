@@ -1,0 +1,273 @@
+\documentclass[a4paper,11pt]{article}
+
+\usepackage[utf8]{inputenc}
+\usepackage[margin=0.8in]{geometry}
+\usepackage{amsmath}
+\usepackage{amssymb}
+\usepackage{graphicx}
+\usepackage{booktabs}
+\usepackage{array}
+\usepackage{tabularx}
+\usepackage{caption}
+\usepackage[hidelinks]{hyperref}
+\usepackage{cite}
+\usepackage{enumitem}
+\usepackage{titlesec}
+\usepackage{xcolor}
+\usepackage{parskip}
+\usepackage{float}
+
+% House style: accent-coloured section headings with a rule underneath.
+\definecolor{accent}{HTML}{0A66C2}
+\titleformat{\section}{\large\bfseries\color{accent}}{\thesection}{0.6em}{}[\titlerule]
+\titlespacing{\section}{0pt}{10pt}{6pt}
+\titleformat{\subsection}{\normalsize\bfseries\color{accent}}{\thesubsection}{0.5em}{}
+\titlespacing{\subsection}{0pt}{8pt}{4pt}
+
+\title{\textbf{An Explainable Multi-Modal AI Framework for Maritime Security
+Intelligence from Sentinel-1 SAR: Dark-Vessel Detection, Illegal-Fishing
+Flagging, and Oil-Spill Assessment}}
+
+\author{
+  Shaun Marvell Rodrigues\\
+  \textit{Supervisor:} Navneet Bhaskar\\[2pt]
+  Nitte Mahalinga Adyantaya Memorial Institute of Technology (NMAMIT)
+}
+\date{}
+
+\begin{document}
+
+\maketitle
+\thispagestyle{empty}
+
+% -----------------------------------------------------------------------
+\section*{Abstract}
+% -----------------------------------------------------------------------
+
+Maritime regions face escalating threats from illegal, unreported and unregulated
+(IUU) fishing, ``dark'' vessels that disable their Automatic Identification System
+(AIS) to evade monitoring, and deliberate or accidental oil discharge, yet these
+problems are typically addressed by separate, stovepiped surveillance systems. In
+this paper we present a single, end-to-end maritime-security framework built
+entirely on free Sentinel-1 Synthetic Aperture Radar (SAR), which images through
+cloud and darkness and is therefore suited to operational, all-weather
+surveillance. From one georeferenced scene the system detects ships, segments oil
+slicks, cross-checks detections against AIS to flag non-broadcasting vessels, and
+rolls the outputs into interpretable security and environmental risk scores. Ship
+detection couples a training-free, resolution-agnostic censored-mean Constant False
+Alarm Rate (CFAR) detector with a YOLO11m oriented-bounding-box model trained on
+HRSID (mAP@50 $=0.938$; $0.910$ after scale-augmented fine-tuning for robustness at
+Sentinel-1's 10\,m/px resolution); the CFAR stage recovers vessels that the
+high-resolution-trained detector misses at medium resolution, and a censoring step
+corrects the classical CFAR target-masking failure in dense anchorages and near
+ocean fronts. Oil-spill segmentation uses a SegFormer transformer benchmarked
+against DeepLabV3+ and U-Net; on a strictly held-out test partition the
+oil-class IoU is $\approx0.48$. We further document a train/inference parity lesson---a
+whole-scene-resize inference path that resolves a $4\times$ resolution skew which had
+silently driven oil predictions to zero---and the polarization asymmetry between
+oil (cross-pol sensitive) and ships (polarization robust). Explainability is
+provided through Grad-CAM saliency and rule-contribution bars rather than tabular
+attribution. We discuss the cross-sensor and cross-region domain gaps that bound
+generalization and an honest AIS workaround for the coverage limits of free
+historical AIS. The result is an integrated, reproducible system that turns raw SAR
+into actionable maritime-security intelligence; we note throughout that SAR yields
+oil \emph{area/extent}, never volume.
+
+\medskip
+\noindent\textbf{Keywords:} Maritime Surveillance, Synthetic Aperture Radar,
+Sentinel-1, Dark Vessel Detection, CFAR, Oil Spill Segmentation, SegFormer,
+AIS Fusion, Explainable AI, Grad-CAM
+
+% -----------------------------------------------------------------------
+\section{Introduction}
+% -----------------------------------------------------------------------
+
+The world's oceans cover more than seventy percent of the planet and carry the
+overwhelming majority of global trade, yet they remain among the least observed
+environments on Earth. This observational gap is exploited at scale. Illegal,
+unreported and unregulated (IUU) fishing is estimated to account for more than a
+fifth of the global catch, depleting stocks and undermining the economies of
+coastal states. Vessels engaged in IUU fishing, sanctions evasion, smuggling, or
+unauthorised operations in restricted waters routinely disable or spoof their
+Automatic Identification System (AIS) transponders to avoid being tracked, becoming
+so-called \emph{dark} vessels that are present in the water but absent from the
+cooperative reporting picture. At the same time, deliberate bilge-water discharge
+and accidental spills release oil into the marine environment, threatening
+fisheries, protected habitats and coastal communities. Each of these threats is
+serious in isolation; together they describe a maritime-security problem that is
+fundamentally about detecting activity that actively tries not to be seen.
+
+Conventional maritime monitoring is poorly matched to this problem for three
+reasons. First, it leans heavily on cooperative data: AIS is invaluable when present
+but is trivially defeated by switching off the transponder, and recent ecological
+work shows that AIS alone misses a large fraction of the vessels that satellite
+imagery reveals inside marine protected areas~\cite{raynor2025}. Second, the optical
+satellite imagery that the public associates with ``satellite surveillance'' is
+blind at night and through cloud, and is typically months to years stale---unusable
+for time-critical, all-weather operations. Third, the capabilities that do exist
+tend to be deployed as separate, stovepiped systems---one tool for vessel detection,
+another for fishing analysis, another for pollution monitoring---so that the
+connections between them, such as linking a fresh oil slick to a nearby
+non-broadcasting vessel, are never made automatically. Spaceborne Synthetic Aperture
+Radar (SAR) addresses the first two limitations directly: as an active microwave
+sensor it images day and night and penetrates cloud, and recent large-scale studies
+have demonstrated that SAR can map industrial activity at sea that is invisible to
+AIS~\cite{paolo2024}. What has been missing is an integrated, reproducible system
+that turns a single SAR scene into a complete, explainable maritime-security
+picture.
+
+In this work we present such a system, built entirely on Sentinel-1, the
+freely available European C-band SAR mission. Sentinel-1 is well suited to
+operational use: its data are open, its Interferometric Wide-swath Ground Range
+Detected (IW GRD) product images a 250\,km swath at roughly 10\,m/px on a six-day
+revisit, and the constellation is being renewed by Sentinel-1C and Sentinel-1D as
+the original satellites retire, so the C-band data format on which our pipeline
+depends will persist. Because oil slicks and ships are extracted from the
+\emph{same} georeferenced scene, they are automatically co-registered and
+time-aligned, and AIS need only be matched to the scene's known acquisition
+timestamp rather than to a live feed. From one scene the framework (i) detects every
+vessel using a training-free censored-mean Constant False Alarm Rate (CFAR) detector
+paired with a YOLO11m oriented-bounding-box network trained on the HRSID
+dataset~\cite{wei2020}; (ii) segments oil slicks with a SegFormer~\cite{xie2021}
+transformer trained on the publicly available Sentinel-1 SAR oil-spill dataset of
+Trujillo-Acatitla~\textit{et~al.}~\cite{trujillo2024} (released on Zenodo), benchmarked
+against DeepLabV3+ and U-Net; (iii) matches detections against historical AIS from Global Fishing Watch
+to flag dark vessels; (iv) applies a rule-based zone-violation and risk-scoring layer
+that links slicks to candidate responsible vessels; and (v) explains its outputs with
+Grad-CAM saliency maps and rule-contribution bars. The complete pipeline is
+orchestrated behind a service that emits georeferenced GeoJSON layers consumed by a
+lightweight web dashboard for visualisation.
+
+The contributions of this paper are deliberately framed around honest, reproducible
+findings rather than headline benchmark numbers. (1)~We show that a censored-mean
+CFAR detector provides \emph{resolution-agnostic} ship detection at Sentinel-1's
+10\,m/px scale, where a detector trained on the much higher-resolution HRSID imagery
+suffers a domain gap; the censoring step further corrects the classical CFAR
+target-masking failure that suppresses dim vessels next to bright ships or ocean
+fronts in dense anchorages. YOLO11m-OBB, used to confirm detections and supply
+oriented geometry, reaches an mAP@50 of $0.938$ on HRSID and $0.910$ after
+scale-augmented fine-tuning for medium-resolution robustness. (2)~We document a
+train/inference parity lesson for oil segmentation: a whole-scene-resize inference
+path that reproduces the training field of view and resolves a $4\times$ resolution
+skew which had silently driven oil predictions to zero despite a healthy validation
+score. (3)~We report a properly disjoint held-out evaluation in which the oil-class
+IoU is $\approx0.48$, well below the in-distribution validation figure, and argue
+that this validation-to-test gap---driven mainly by look-alike false positives---is
+itself the scientifically useful result. (4)~We analyse the cross-sensor
+(X/C/L-band) and cross-region domain gaps that bound generalisation and identify
+xView3-SAR as the principled remedy for the ship-detection resolution gap. (5)~We
+present an honest synthetic-AIS workaround for the coverage and latency limits of
+free historical AIS. (6)~We deliver the whole pipeline as one operational system, not
+a collection of disconnected models. Throughout, we are careful not to overclaim: a
+recently published ``SOTA'' oil model whose code was never released falls back
+silently to SegFormer and is reported as SegFormer; and we stress that SAR yields oil
+\emph{area/extent}, never volume.
+
+% -----------------------------------------------------------------------
+\section{Related Work}
+% -----------------------------------------------------------------------
+
+Research relevant to this framework spans three threads: SAR vessel detection
+(covering both classical Constant False Alarm Rate detectors and learned networks),
+SAR oil-spill segmentation, and the fusion of SAR detections with AIS to reveal dark
+vessels. We review ten representative works, emphasising publications from 2022 onward,
+and position our design against each.
+
+Paolo~\textit{et~al.}~\cite{paolo2022xview3} introduced xView3-SAR, the largest
+labelled benchmark for SAR vessel and infrastructure detection, comprising nearly one
+thousand analysis-ready Sentinel-1 scenes that are on average $29{,}400\times24{,}400$
+pixels, together with bathymetry and wind-state layers. The associated international
+challenge brought the problem of dark, AIS-absent vessels to the machine-learning
+community and produced models that have since been deployed operationally against
+illegal fishing. Crucially for our work, xView3 is Sentinel-1 Interferometric
+Wide-swath imagery at roughly the same medium ($\sim$10--20\,m/px) resolution at which
+our pipeline operates; we therefore identify fine-tuning on xView3-SAR as the
+principled remedy for the resolution domain gap that affects our HRSID-trained
+detector, and treat it as future work rather than a component of the present system.
+
+Ma~\textit{et~al.}~\cite{ma2024amanet} proposed AMANet, an adaptive
+multi-hierarchical attention network that fuses information across adjacent feature
+layers and adaptively combines channel features, improving average precision on the
+SSDD and HRSID benchmarks over its baseline. It is representative of the strong
+attention-augmented CNN detectors that define recent HRSID performance. Like the great
+majority of SAR ship-detection papers, however, AMANet is trained and evaluated at
+HRSID's native $0.5$--$3$\,m/px resolution, where a $100$\,m vessel spans tens to
+hundreds of pixels, and it does not address the distribution shift that arises at
+$10$\,m/px Sentinel-1 IW resolution---the regime in which our pipeline must operate.
+
+He~\textit{et~al.}~\cite{he2025acyolo} proposed AC-YOLO, a lightweight detector built
+on YOLO11 that integrates an ACmix attention module, a CCFM feature-fusion neck, and an
+MPDIoU regression loss, raising mAP by $1.5\%$ on HRSID and $1.2\%$ on SSDD while
+reducing parameters by roughly a third. AC-YOLO confirms that YOLO11-class
+architectures are the current high-water mark for SAR ship detection and directly
+motivates our choice of a YOLO11m oriented-bounding-box backbone. As with AMANet,
+however, the gains are demonstrated at training resolution; architectural refinement
+alone does not close the medium-resolution inference gap, which is why our system pairs
+the learned detector with a physics-based detector rather than relying on it alone.
+
+Closest in spirit to our hybrid detector, Wen~\textit{et~al.}~\cite{wen2024cfaryolo}
+embedded a sub-network that learns classical CFAR features inside YOLOv5s, enhancing
+sensitivity to low-contrast targets. Our design differs in an important respect: rather
+than folding CFAR into the learned detector as a trainable feature, we retain a
+separate, \emph{training-free} censored-mean CFAR stage that is resolution-agnostic and
+gates the YOLO detections, so the physics-based component requires no retraining when
+the sensor or pixel size changes.
+
+On the purely classical side, Zhang~\textit{et~al.}~\cite{zhang2023spcfar} developed an
+improved superpixel-level CFAR (SP-CFAR) for high-resolution SAR, replacing the
+rectangular clutter window with superpixels so that the detection threshold is
+estimated from pure-clutter regions, which markedly improves inshore and densely packed
+ship detection. SP-CFAR is effectively the non-deep-learning state of the art for dense
+scenes, but a full superpixel pass over a multi-thousand-pixel scene is comparatively
+slow and would conflict with the absolute-threshold land mask our pipeline relies on.
+We therefore adopt censored-mean CFAR (CMLD), a faster member of the same robustness
+family, which recovers most of SP-CFAR's benefit by censoring bright interferers from
+the clutter estimate while preserving cell-averaging speed.
+
+Turning to oil-spill segmentation, Wu~\textit{et~al.}~\cite{wu2024compositional}
+proposed a compositional detector that pairs YOLOv8 with an adapted Segment Anything
+Model, converting detected boxes into masks and fusing them through an ordered-mask
+module. This SAM-based direction is precisely the lineage of the recently announced
+``OilSAM2'' model we had hoped to benchmark; because that model's code was never
+publicly released, our system instead uses a directly trained SegFormer, and we report
+results honestly as SegFormer rather than as the unavailable state of the art.
+
+Moon~\textit{et~al.}~\cite{moon2024diffusion} attacked the chronic data-scarcity
+problem in SAR oil-spill segmentation using diffusion-generated synthetic imagery and
+knowledge distillation over soft labels, improving minority-class performance without a
+pre-trained teacher. Their approach is complementary to the look-alike hard-negative
+upsampling we employ and points to a promising augmentation route for closing the
+validation-to-test gap we report.
+
+Most directly relevant to our central empirical finding,
+Juarez~\textit{et~al.}~\cite{juarez2025crossdomain} studied cross-domain oil-spill
+segmentation and reported that a model trained on Mediterranean data degrades from
+$67.8\%$ to $51.8\%$ mIoU when transferred to a Peruvian domain, recovering up to
+$+6$ mIoU with morphological region perturbation and synthetic SAR generation. Their
+result independently corroborates the large cross-distribution drop we observe and
+reinforces our argument that an honestly disjoint evaluation is essential when
+reporting oil-segmentation accuracy.
+
+On the fusion side, Paolo~\textit{et~al.}~\cite{paolo2024nature} mapped global
+industrial activity at sea by combining Sentinel-1 SAR, AIS, and three deep
+convolutional networks for object detection, length estimation, and vessel
+classification, finding that $72$--$76\%$ of the world's industrial fishing vessels are
+absent from public tracking. This study is the methodological anchor for the principle
+that SAR reveals activity invisible to AIS; our framework operationalises the same
+detect-then-cross-check logic at single-scene granularity and layers integrated risk
+scoring and explainability on top.
+
+Complementarily, Raynor~\textit{et~al.}~\cite{raynor2025science} combined AIS with SAR
+to study fishing inside strictly protected marine areas and found that AIS missed close
+to $90\%$ of the fishing vessels that SAR detected in coastal zones. This quantifies
+precisely why AIS-only monitoring is insufficient and motivates the dark-vessel
+flagging and zone-violation logic at the heart of our risk layer.
+
+Taken together, these works advance individual components---learned or classical vessel
+detection, oil-spill segmentation, and AIS--SAR fusion---but none integrates detection,
+oil segmentation, AIS-based dark-vessel discrimination, rule-based risk scoring, and
+visual explainability into a single operational pipeline driven by one freely available
+sensor. That integration, together with the honest systems lessons we document, is the
+contribution of this paper.
+
+\end{document}

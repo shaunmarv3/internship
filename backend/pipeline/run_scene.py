@@ -73,7 +73,7 @@ def run(args: argparse.Namespace) -> Path:
         match_detections_to_ais, flag_zone_violations,
     )
     from src.fusion.risk_scoring import build_risk_table
-    from backend.pipeline.segment import segment_scene, best_oil_chip
+    from backend.pipeline.segment import segment_scene, segment_scene_resized, best_oil_chip
     from backend.pipeline.geo import mask_to_polygons
     from backend.pipeline import serialize
 
@@ -100,15 +100,19 @@ def run(args: argparse.Namespace) -> Path:
     bbox = (min(lon0, lon1), min(lat0, lat1), max(lon0, lon1), max(lat0, lat1))
 
     # 2. ships — CFAR primary + YOLO geometry
-    # CA-CFAR (α=20) is resolution-agnostic: outperforms HRSID-trained YOLO at
-    # Sentinel-1 IW 10m/px because it adapts to local sea clutter statistics.
+    # Censored-mean CFAR (α=20) is resolution-agnostic: outperforms HRSID-trained
+    # YOLO at Sentinel-1 IW 10m/px because it adapts to local sea clutter
+    # statistics. Censoring (vs plain cell-averaging) excludes bright neighbour
+    # ships / ocean fronts from the clutter estimate → no target masking in dense
+    # anchorages (Singapore) or near current fronts (mauritius_sea).
     # YOLO adds oriented bounding box geometry for large/confident ships.
     # Strategy: CFAR finds all candidates; YOLO confirms + provides OBB for the
     # subset it can resolve (typically bright, larger vessels at 10m/px).
     from src.models.detection import cfar_detect
     cfar_dets = cfar_detect(scene_path,
                              guard=5, train=20,
-                             alpha=getattr(args, "cfar_alpha", 20.0))
+                             alpha=getattr(args, "cfar_alpha", 20.0),
+                             method=getattr(args, "cfar_method", "censored"))
     print(f"CFAR: {len(cfar_dets)} ship candidates")
 
     # YOLO on the same chips (keeps the OBB geometry for confirmed ships)
@@ -180,8 +184,13 @@ def run(args: argparse.Namespace) -> Path:
     # 5. oil (SegFormer) -> polygons. The model under-predicts at argmax(0.5)
     # (val recall ~51%); --oil-threshold lets you lower it toward the sweep
     # optimum (~0.30) to surface fainter slicks.
-    scene_mask = segment_scene(chips, args.segformer, backbone=args.backbone,
-                               oil_threshold=getattr(args, "oil_threshold", 0.5))
+    # oil_infer="resize" (default) runs whole-scene-resize-to-512 inference, matching
+    # how the model was trained/evaluated. "chip" is the legacy native-chip path that
+    # under-fires due to the 4× resolution skew (research.md 2026-06-28). Keep as fallback.
+    _oil_infer = getattr(args, "oil_infer", "resize")
+    _segment = segment_scene_resized if _oil_infer == "resize" else segment_scene
+    scene_mask = _segment(chips, args.segformer, backbone=args.backbone,
+                          oil_threshold=getattr(args, "oil_threshold", 0.5))
     oil_polys = mask_to_polygons(scene_mask, transform, scale_m=args.scale,
                                  min_area_px=getattr(args, "oil_min_area_px", 50))
 
@@ -511,6 +520,9 @@ def build_parser() -> argparse.ArgumentParser:
                    help="P(oil) cutoff; lower (~0.30) surfaces fainter slicks (argmax=0.5 under-predicts)")
     p.add_argument("--oil-min-area-px", type=int, default=25,
                    help="drop oil polygons smaller than this many pixels")
+    p.add_argument("--oil-infer", default="resize", choices=["resize", "chip"],
+                   help="resize: whole-scene→512 oil inference (matches training; default)  |  "
+                        "chip: legacy native 512-chip path (under-fires, ~4x resolution skew)")
     p.add_argument("--no-land-mask", dest="mask_land", action="store_false",
                    help="keep ship detections that fall on land (default: drop them)")
     p.add_argument("--match-radius", type=float, default=500.0)

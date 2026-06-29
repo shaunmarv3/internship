@@ -1,8 +1,8 @@
 {
   "oil_iou": null,
   "yolo_map50": null,
-  "dark_count": 9,
+  "dark_count": 0,
   "slick_count": 0,
-  "security_risk": 0.4,
+  "security_risk": 0.0,
   "environmental_risk": 0.0
 }

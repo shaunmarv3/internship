@@ -1,0 +1,23 @@
+{
+  "id": "00080_oil",
+  "title": "00080_oil",
+  "sensor": "Sentinel-1",
+  "acquired_utc": "2026-06-29T09:42:45Z",
+  "bbox": [
+    -89.1025,
+    28.8218,
+    -88.9186,
+    29.0058
+  ],
+  "summary": "3 slick(s), 1 dark vessel(s).",
+  "scene_overlay": {
+    "png": "00080_oil/overlays/scene.png",
+    "bounds": [
+      -89.102525,
+      28.821805,
+      -88.91855,
+      29.00578
+    ],
+    "v": 1782726193
+  }
+}

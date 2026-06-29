@@ -3,16 +3,8 @@
 import { useCallback, useEffect, useState } from "react";
 import dynamic from "next/dynamic";
 import { fetchCaseStudies, fetchCaseStudy } from "@/lib/api";
-import type {
-  CaseStudyDetail,
-  CaseStudySummary,
-  LayerName,
-  SelectedFeature,
-} from "@/lib/types";
-import CaseStudyPicker from "@/components/CaseStudyPicker";
-import LayerToggles from "@/components/LayerToggles";
-import DetailPanel from "@/components/DetailPanel";
-import MetricsStrip from "@/components/MetricsStrip";
+import type { CaseStudyDetail, LayerName } from "@/lib/types";
+import SceneInfo from "@/components/SceneInfo";
 import UploadScene from "@/components/UploadScene";
 
 const MapView = dynamic(() => import("@/components/MapView"), { ssr: false });
@@ -24,6 +16,11 @@ const ALL_LAYERS: LayerName[] = [
   "ais_tracks",
   "zones",
 ];
+
+// Layers are always on now (the toggle panel was removed) — pass a constant.
+const ALL_VISIBLE = Object.fromEntries(
+  ALL_LAYERS.map((l) => [l, true]),
+) as Record<LayerName, boolean>;
 
 function TopBar({ detail }: { detail: CaseStudyDetail | null }) {
   return (
@@ -44,24 +41,15 @@ function TopBar({ detail }: { detail: CaseStudyDetail | null }) {
 }
 
 export default function Page() {
-  const [studies, setStudies] = useState<CaseStudySummary[]>([]);
   const [activeId, setActiveId] = useState<string | null>(null);
   const [detail, setDetail] = useState<CaseStudyDetail | null>(null);
-  const [visible, setVisible] = useState<Record<LayerName, boolean>>(
-    () =>
-      Object.fromEntries(ALL_LAYERS.map((l) => [l, true])) as Record<
-        LayerName,
-        boolean
-      >,
-  );
-  const [selected, setSelected] = useState<SelectedFeature | null>(null);
   const [error, setError] = useState<string | null>(null);
 
+  // Load the most recently processed scene on first paint.
   useEffect(() => {
     fetchCaseStudies()
       .then((s) => {
-        setStudies(s);
-        if (s.length) setActiveId(s[0].id);
+        if (s.length) setActiveId(s[s.length - 1].id);
       })
       .catch((e) =>
         setError(`Cannot reach API — start the backend on :8000. (${e})`),
@@ -70,36 +58,20 @@ export default function Page() {
 
   useEffect(() => {
     if (!activeId) return;
-    setSelected(null);
     fetchCaseStudy(activeId)
       .then(setDetail)
       .catch((e) => setError(String(e)));
   }, [activeId]);
 
-  const toggle = useCallback(
-    (l: LayerName) => setVisible((v) => ({ ...v, [l]: !v[l] })),
-    [],
-  );
-
-  const handleUploaded = useCallback((id: string) => {
-    fetchCaseStudies().then((s) => {
-      setStudies(s);
-      setActiveId(id);
-    });
-  }, []);
+  const handleUploaded = useCallback((id: string) => setActiveId(id), []);
 
   return (
     <div className="flex h-screen flex-col">
       <TopBar detail={detail} />
       <div className="flex min-h-0 flex-1">
         <aside className="flex w-72 flex-col overflow-y-auto border-r border-zinc-800 bg-zinc-950">
-          <CaseStudyPicker
-            studies={studies}
-            activeId={activeId}
-            onSelect={setActiveId}
-          />
           <UploadScene onUploaded={handleUploaded} />
-          <LayerToggles visible={visible} onToggle={toggle} />
+          <SceneInfo detail={detail} />
         </aside>
 
         <main className="relative min-w-0 flex-1">
@@ -108,12 +80,9 @@ export default function Page() {
               {error}
             </div>
           )}
-          <MapView detail={detail} visible={visible} onSelect={setSelected} />
+          <MapView detail={detail} visible={ALL_VISIBLE} onSelect={() => {}} />
         </main>
-
-        <DetailPanel detail={detail} selected={selected} />
       </div>
-      <MetricsStrip detail={detail} />
     </div>
   );
 }

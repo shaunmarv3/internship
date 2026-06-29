@@ -127,6 +127,7 @@ def _pipeline_namespace(**kw) -> SimpleNamespace:
         out=str(DATA_DIR), chip_size=512, scale=10.0, conf=0.15,
         match_radius=500.0, oil_iou=None, yolo_map50=None,
         oil_threshold=0.35, oil_min_area_px=25, mask_land=True,
+        oil_infer="resize",
         synthetic_ais_fraction=syn_fraction, synthetic_ais_mode=syn_mode,
     )
     base.update(kw)
