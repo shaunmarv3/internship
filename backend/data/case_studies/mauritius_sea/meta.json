@@ -2,14 +2,14 @@
   "id": "mauritius_sea",
   "title": "mauritius_sea",
   "sensor": "Sentinel-1",
-  "acquired_utc": "2026-06-28T12:00:04Z",
+  "acquired_utc": "2026-06-28T14:03:42Z",
   "bbox": [
     57.7099,
     -20.5,
     57.8501,
     -20.38
   ],
-  "summary": "1 slick(s), 2 dark vessel(s).",
+  "summary": "0 slick(s), 3 dark vessel(s).",
   "scene_overlay": {
     "png": "mauritius_sea/overlays/scene.png",
     "bounds": [
@@ -18,6 +18,6 @@
       57.850067,
       -20.379989
     ],
-    "v": 1782648037
+    "v": 1782655491
   }
 }

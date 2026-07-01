@@ -54,3 +54,15 @@ export interface SelectedFeature {
   layer: LayerName;
   properties: Record<string, unknown>;
 }
+
+// YOLO-only PNG demo (HRSID exhibit). No geo — pixel-space result only.
+export interface PngDetectResult {
+  id: string;
+  filename: string;
+  image: string; // png-asset-relative path, e.g. "hrsid_0001/annotated.png"
+  ship_count: number;
+  width: number;
+  height: number;
+  confidences: number[];
+  v?: number; // cache-buster
+}

@@ -1,3 +1,29 @@
+> ## ⚠️ OUTDATED — this is an early design narrative (kept for history)
+>
+> The module walkthrough below describes the **originally planned** 6-module system and no
+> longer matches what was built. Read this block first.
+>
+> **What the system actually is (2026-07):** one integrated pipeline on **Sentinel-1 SAR
+> only**.
+> - **Ships** = censored-mean **CFAR** (primary, training-free) + **YOLO11m-OBB** (HRSID,
+>   mAP@50 0.938). **Oil** = **SegFormer** (whole-scene-resize inference; val ≈ 0.79,
+>   held-out test ≈ 0.48). **Dark vessels** = AIS match, but real AIS is unusable so a
+>   **synthetic AIS proxy** is used. **Risk** = rule-based zones + spill↔vessel linkage.
+>   **Explain** = **Grad-CAM + rule-contribution bars**.
+> - **Dropped:** Module 2 XGBoost illegal-fishing classifier, **SHAP**, Module 4 oil-drift
+>   (OpenDrift/LSTM), and Streamlit. **OilSAM2** falls back to SegFormer (no released code).
+> - **Datasets:** HRSID (ships) + **Trujillo-Acatitla et al. 2024** Zenodo oil dataset
+>   (**not "Krestenitis"**). SOS cross-domain set was not used. No real AIS / GFW data was
+>   used. SAR gives oil **area, never volume**.
+> - **Stack:** FastAPI backend + Next.js / MapLibre frontend (upload → scene metadata + oil
+>   extent → map).
+>
+> Ignore references below to XGBoost (M2), OpenDrift (M4), SHAP, 160 km fusion tuning, and
+> `gap.intentionalDisabling` as a live signal. See `research.md` and
+> `paper/maritime_paper.tex`.
+
+---
+
 ● Let me lay out the entire system end-to-end, nothing skipped.
 
 ---

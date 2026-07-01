@@ -182,11 +182,25 @@ def cfar_detect(
     guard: int = 5,
     train: int = 20,
     alpha: float = 20.0,
+    method: str = "censored",
+    censor_sigma: float = 3.0,
 ) -> list:
     """
-    CA-CFAR (Cell-Averaging Constant False Alarm Rate) detector.
+    Censored-mean CFAR (CMLD) ship detector — masking-robust by default.
     Resolution-agnostic — adapts to local sea clutter at any pixel scale.
     At Sentinel-1 IW 10m/px outperforms HRSID-trained YOLO in recall.
+
+    method="censored" (default): a generalization of OS-CFAR. The plain
+        Cell-Averaging clutter estimate is corrupted in DENSE scenes — a second
+        ship (or a bright ocean front/wake) sitting inside the training ring
+        inflates the local mean, so the threshold `alpha*clutter` rises and a
+        nearby dimmer ship falls below it and is MISSED (the classic CA-CFAR
+        multiple-target masking failure — observed on Singapore anchorage and
+        the mauritius_sea current front). Fix: estimate the ring mean+std, CENSOR
+        cells brighter than mean + censor_sigma*std (interfering targets / fronts),
+        then recompute the clutter mean over the surviving pure-clutter cells only.
+        Done with masked box filters → same speed budget as CA-CFAR, no new deps.
+    method="ca": legacy plain Cell-Averaging CFAR (kept as a fallback).
 
     Returns same format as SARVesselDetector.detect_scene() so it's a
     drop-in: list of {scene_x, scene_y, width_px, height_px, conf, class}.
@@ -208,12 +222,31 @@ def cfar_detect(
     lin = np.nan_to_num(10 ** (db / 10.0), 0.0)
 
     total_w, guard_w = train * 2 + 1, guard * 2 + 1
-    tm = ndi.uniform_filter(lin, total_w)
-    gm = ndi.uniform_filter(lin, guard_w)
-    clutter = np.maximum(
-        (tm * total_w**2 - gm * guard_w**2) / (total_w**2 - guard_w**2),
-        1e-10,
-    )
+    ring_cells = total_w**2 - guard_w**2
+
+    # Sum / mean over the training ANNULUS (total box minus the guard box).
+    def _ring_sum(img):
+        tot = ndi.uniform_filter(img, total_w) * total_w**2   # sum over total box
+        grd = ndi.uniform_filter(img, guard_w) * guard_w**2   # sum over guard box
+        return tot - grd
+
+    def _ring_mean(img):
+        return _ring_sum(img) / ring_cells
+
+    ca_mean = np.maximum(_ring_mean(lin), 1e-10)
+
+    if method == "censored":
+        # ring std from E[x^2] - E[x]^2
+        ring_sq  = np.maximum(_ring_mean(lin * lin), 0.0)
+        ring_std = np.sqrt(np.maximum(ring_sq - ca_mean**2, 0.0))
+        # keep = pure-clutter cells (exclude bright interfering targets / fronts)
+        keep     = (lin <= ca_mean + censor_sigma * ring_std).astype(np.float32)
+        kept_sum = _ring_sum(lin * keep)
+        kept_cnt = _ring_sum(keep)
+        clutter  = np.maximum(kept_sum / np.maximum(kept_cnt, 1.0), 1e-10)
+    else:  # "ca" — legacy plain cell-averaging
+        clutter = ca_mean
+
     det = (lin > alpha * clutter).astype(np.uint8)
 
     import cv2
@@ -242,8 +275,12 @@ def cfar_detect(
         if det_stats[i, cv2.CC_STAT_AREA] >= min_det_px:
             det_filtered[det_lbl == i] = 1
 
-    k9  = cv2.getStructuringElement(cv2.MORPH_ELLIPSE, (9, 9))
-    mrg = cv2.dilate(det_filtered, k9)
+    # Merge kernel: small on purpose. A 9px (≈90m) dilation fused adjacent ships
+    # in dense anchorages (Singapore) into ONE connected component → undercount.
+    # 5px (≈50m) still bridges the speckle gaps within a single ship's return
+    # while keeping vessels ~50m+ apart as separate detections.
+    k5  = cv2.getStructuringElement(cv2.MORPH_ELLIPSE, (5, 5))
+    mrg = cv2.dilate(det_filtered, k5)
     _, _, stats, cents = cv2.connectedComponentsWithStats(mrg)
 
     detections = []
