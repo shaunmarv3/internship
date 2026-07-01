@@ -25,6 +25,7 @@ from backend.schemas import CaseStudyDetail, CaseStudySummary
 
 DATA_DIR = Path(__file__).parent / "data" / "case_studies"
 UPLOAD_DIR = Path(__file__).parent / "data" / "uploads"
+PNG_DEMO_DIR = Path(__file__).parent / "data" / "png_demos"
 
 app = FastAPI(title="Maritime Intelligence API")
 app.add_middleware(
@@ -42,6 +43,15 @@ def serve_asset(path: str):
     file_path = DATA_DIR / path
     if not file_path.exists() or not file_path.is_file():
         raise HTTPException(status_code=404, detail=f"asset not found: {path}")
+    return FileResponse(str(file_path), headers={"Cache-Control": "no-store"})
+
+
+@app.get("/png-assets/{path:path}")
+def serve_png_asset(path: str):
+    """Serve annotated PNG-demo images (YOLO-only exhibit, no case study)."""
+    file_path = PNG_DEMO_DIR / path
+    if not file_path.exists() or not file_path.is_file():
+        raise HTTPException(status_code=404, detail=f"png asset not found: {path}")
     return FileResponse(str(file_path), headers={"Cache-Control": "no-store"})
 
 
@@ -164,3 +174,40 @@ def process_scene(
         traceback.print_exc()
         raise HTTPException(status_code=500, detail=f"pipeline failed: {type(e).__name__}: {e}")
     return {"id": cid}
+
+
+@app.post("/detect-png")
+def detect_png(file: UploadFile = File(...)):
+    """YOLO-only demo on a raw HRSID PNG — no CFAR, no SegFormer, no geo.
+
+    HRSID images are the model's own training domain (0.5-3 m/px amplitude), so this
+    exhibits YOLO standing alone. A PNG has no georeferencing, so the result is drawn
+    directly onto the image (pixel space) and shown instead of the map.
+    """
+    stem = Path(file.filename or "hrsid").stem
+    cid = re.sub(r"[^A-Za-z0-9_-]+", "-", stem).strip("-").lower() or "hrsid"
+    out_dir = PNG_DEMO_DIR / cid
+    out_dir.mkdir(parents=True, exist_ok=True)
+    in_png = out_dir / "input.png"
+    with open(in_png, "wb") as f:
+        shutil.copyfileobj(file.file, f)
+
+    try:
+        from backend.pipeline.png_demo import run_yolo_png
+        info = run_yolo_png(str(in_png), str(out_dir / "annotated.png"), yolo_ckpt=YOLO_CKPT)
+    except Exception as e:
+        import traceback
+        traceback.print_exc()
+        raise HTTPException(status_code=500, detail=f"YOLO demo failed: {type(e).__name__}: {e}")
+
+    import time
+    return {
+        "id": cid,
+        "filename": file.filename or f"{cid}.png",
+        "image": f"{cid}/annotated.png",
+        "ship_count": info["ship_count"],
+        "width": info["width"],
+        "height": info["height"],
+        "confidences": info["confidences"],
+        "v": int(time.time()),
+    }

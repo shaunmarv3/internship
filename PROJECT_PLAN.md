@@ -1,3 +1,36 @@
+> ## ⚠️ STATUS — what actually shipped (2026-07, supersedes the plan below)
+>
+> The plan below is the **original planning record** and is kept for history. The system as
+> built differs in several deliberate ways — read this block first; where it conflicts with
+> the text below, this block wins.
+>
+> **Built:** one integrated pipeline on **Sentinel-1 SAR only** (FastAPI backend + Next.js /
+> MapLibre frontend).
+> - **Ships:** censored-mean **CFAR** (training-free, resolution-agnostic, primary) +
+>   **YOLO11m-OBB** (HRSID, mAP@50 **0.938**) for oriented geometry; CFAR fills the 10 m/px
+>   domain gap. RT-DETR/YOLO26m were benchmarked but OBB won.
+> - **Oil:** **SegFormer** (vs DeepLabV3+ / U-Net), **whole-scene-resize inference**. Val
+>   OilIoU ≈ 0.79, **held-out Part III test ≈ 0.48** (reported honestly).
+> - **Dark vessels:** AIS match at scene time, but **real AIS is unusable** (GFW = gap/absence
+>   endpoint, 72–96 h lag, fishing-only) → demonstrated with a **synthetic AIS proxy**.
+> - **Risk:** **rule-based** zone violation + spill↔dark-vessel linkage. **Explain:**
+>   **Grad-CAM + rule-contribution bars.**
+>
+> **Dropped from the plan:** XGBoost illegal-fishing classifier (M2), BiGRU, **SHAP**,
+> oil-drift forecasting (M4 / OpenDrift), and the Streamlit dashboard. **OilSAM2** had no
+> released code and silently falls back to SegFormer (report as SegFormer).
+>
+> **Dataset corrections:** oil data is **Trujillo-Acatitla et al. 2024** (Zenodo
+> 8346860 / 8253899 / 13761290) — **NOT "Krestenitis"** (a different, dropped dataset).
+> The **SOS / Refined Deep-SAR** cross-domain run was never completed (not used). HRSID is
+> used as a high-resolution SAR ship set; no TerraSAR-X "cross-sensor" claim is made.
+>
+> **Guardrails:** SAR yields oil **area/extent, never volume**.
+>
+> See `research.md` (running log) and `paper/maritime_paper.tex` (write-up) for details.
+
+---
+
 # PROJECT_PLAN.md — Source of Knowledge
 
 ## Explainable Multi-Modal AI Framework for Maritime Security Intelligence

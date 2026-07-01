@@ -1384,3 +1384,158 @@ Method/dataset refs still to define: `wei2020` (HRSID), `trujillo2024` (Zenodo o
 `xie2021` (SegFormer NeurIPS 2021). NOTE: intro currently uses `raynor2025` — RENAME
 to `raynor2025science` for consistency when writing the bibliography. Awaiting review
 before Datasets section.
+
+**EDITOR-SYNC WARNING (2026-06-29):** user has maritime_paper.tex open in an editor that
+overwrote my Related Work addition once (their save clobbered it). Re-added it. Told user
+to close/reload the file before I edit. Watch for silently-reverted sections.
+
+**Chunk 4 DONE — Methodology = Section 3** (template-style: dataset folded in as a
+subsection, per user). User-provided figure `paper/methodology.png` (3-stage block
+diagram: Data Sources → Perception/Analysis [2.1 CFAR+YOLO11m-OBB, 2.2 SegFormer oil →
+ship-in-vicinity → association/decision] → Response/Dashboard, oil extent 12.43 km²
+example). Structure:
+- intro para + Figure 1 (methodology.png, full-width) + explanation para.
+- 3.1 Datasets (HRSID, Trujillo I/II/III train-val + held-out III, SOS, GFW) + booktabs table.
+- 3.2 SAR Preprocessing — eqs: dB→linear, Lee filter, percentile-normalize; [VV,VH,VH]
+  + VH-clutter / polarization-asymmetry rationale.
+- 3.3 Vessel Detection — eqs: ring mean/std, censored set + clutter, CFAR threshold
+  (G=5,T=20,α=20,κ=3), YOLO∪CFAR merge with gate r_g=15/r_m=10; land mask, scale-aug.
+- 3.4 Oil Segmentation — eqs: DiceFocal (focal+dice), IoU, whole-scene-resize inference,
+  threshold τ∈[0.30,0.35], area A (km², NOT volume).
+- 3.5 AIS Fusion/Risk/Explainability — eqs: pixel→affine lon/lat, dark-flag gate 500m,
+  fusion radius R, security S & environmental E bounded scores, Grad-CAM; rule-contrib
+  bars vs SHAP. Synthetic-AIS proxy disclosed honestly.
+~18 numbered equations total (template rigor). Image cited as Figure~\ref{fig:methodology}.
+Awaiting review before Experiments & Results.
+
+**METHODOLOGY CORRECTIONS after user review (2026-06-29) — I had hallucinated several
+dataset/preprocess facts. Fixed to match what was ACTUALLY used:**
+- **Datasets = ONLY two:** HRSID (ships) + Trujillo-Acatitla Zenodo oil (I/II/III).
+  DROPPED from the paper: TerraSAR-X/TanDEM-X sensor breakdown + "0.5–3 m" (user: never
+  used those; describe HRSID just as "high-resolution SAR, finer than Sentinel-1 IW 10 m"
+  to keep the domain-gap argument); SOS/Refined Deep-SAR (never completed → not a dataset
+  in the paper); GFW/AIS and EEZ/MPA as "datasets used" (user: **never used real AIS at
+  all**). Table reduced to 2 rows, fixed column spec ({@{}l l X@{}}) — old {l l l X}
+  wrapped one word per line.
+- **Preprocessing is TWO DISTINCT pipelines, NOT one shared front-end (my error):**
+  - SegFormer (oil), train+inference identical: dB→linear (10^(dB/10)) → 7×7 Lee →
+    percentile-normalize(99.5) [0,1] → stack [VV,VH,VH] → resize 512 + ImageNet-norm.
+  - YOLO (ship) TRAIN: HRSID 8-bit log-display chips used directly (0–255→0–1), NO
+    dB→linear, NO Lee (Lee blurs ships). INFERENCE: fixed dB-window normalize per pol
+    (VV [-25,0] dB, VH [-30,-10] dB) → [0,1], NO Lee (research.md:921-928). CFAR runs on
+    linear VH power. Both stack [VV,VH,VH].
+- **AIS reality (3.5):** real AIS NEVER usable (GFW = gap/absence endpoint, 72–96h lag,
+  fishing-only; no free all-vessel historical source). Dark/normal split = honest
+  SYNTHETIC AIS PROXY (apply_synthetic_ais). Stated as such; real AIS = future work.
+  Zone-violation softened to "optional, when EEZ/MPA polygons supplied."
+NOTE for future chunks: research.md's "cross-sensor generalization (TerraSAR-X)" and
+"AIS matching" paper-points are NOT part of what was actually used — do not reintroduce.
+
+**Chunk 5 DONE — Experiments & Results = Section 4** (2026-07-01). Read ALL 14 res/
+screenshots to verify numbers. Subsections: 4.1 Setup, 4.2 Vessel benchmark (table +
+Fig res/ship/metrics3.png + OBB-beats-model-year finding), 4.3 Censored-CFAR at 10m/px
+(CFAR-vs-YOLO table Singapore + masking validation 1.135 vs 0.502), 4.4 Oil benchmark
+(val vs held-out TEST table + Fig res/oil/metrics4.png + val→test gap + threshold sweep),
+4.5 Integrated output.
+VERIFIED FROM SCREENSHOTS (authoritative over research.md where they differ):
+- Ships (HRSID test 1962 img/5922 inst): YOLOv8m P0.913/R0.822/mAP50 0.910/mAP50-95 0.669;
+  YOLO11m-OBB P0.92/R0.873/mAP50 **0.938**/mAP50-95 0.688 (20.88M params, 71.3 GFLOPs);
+  YOLO26m P0.926/R0.802/mAP50 **0.908**/mAP50-95 0.671 (20.35M params).
+  **DISCREPANCY:** research.md line 322 had YOLO26m as 0.911 mAP50 / 0.816 R, but
+  res/ship/yolo26m.png shows **0.908 / 0.802** — used the SCREENSHOT. Flagged to user.
+  Train times from research.md: v8m 2h02m, obb 2h25m, 26m 2h40m (screenshot only gave
+  v8m 2.026h).
+- Oil val OilIoU (banners): U-Net 0.7496, DeepLabV3+ 0.7728, SegFormer-b4 0.7993,
+  SegFormer-b5 0.7946 (b4 1h21m36s, b5 1h15m28s, unet 44m32s, deeplab 44m55s).
+  Test OilIoU (Part III, from research.md — NOT in a screenshot): 0.369/0.356/0.481/0.484;
+  b5@τ=0.30 → 0.490.
+Figures: metric curves use ../res/ship/metrics3.png and ../res/oil/metrics4.png (explicit
+relative paths from paper/). FOUR qualitative figs are PLACEHOLDERS the user must capture
+into paper/: fig_ship_detection.png (YOLO OBB on SAR), fig_cfar_singapore.png (CFAR on
+Singapore 10m), fig_oil_segmentation.png (SegFormer mask vs GT Part III), fig_dashboard.png
+(integrated dashboard). Awaiting review before Discussion.
+
+**Chunk 5 revisions (2026-07-01, per user):** (1) Section 4 renamed "Experiments and
+Results" → **"Results and Discussion"** to match the reference paper; **Discussion is now
+a SUBSECTION (4.6)**, not a separate section (Conclusion + References remain separate).
+Discussion = 3 paras (geometry-beats-model-year + CFAR/censoring + contrast w/ zhang2023
+& wen2024; honest oil eval + Juarez corroboration + OilSAM2/volume guardrails;
+polarization asymmetry + train/inference-parity lesson + AIS-bound-by-availability).
+(2) CFAR **qualitative figure switched Singapore → Strait of Hormuz** (user: Singapore
+shows land FPs, don't want to display). Singapore **counts kept in Table 2** (the real
+dense-anchorage benchmark that demonstrates CFAR recall) with a bridging sentence; only
+the shown IMAGE is Hormuz. Placeholder renamed fig_cfar_singapore.png →
+**fig_cfar_hormuz.png**. Screenshots still needed from user: fig_ship_detection.png,
+fig_cfar_hormuz.png, fig_oil_segmentation.png, fig_dashboard.png (all into paper/).
+Next: Conclusion (separate section) then References (bibliography).
+
+**Chunk 6 DONE — Conclusion + References (2026-07-01). PAPER DRAFT COMPLETE.**
+- Section 5 Conclusion: 2 paras (summary of integrated system + headline results
+  [OBB 0.938, geometry>recency, CFAR 257, honest oil ~0.48, train/inference parity,
+  guardrails]; then limitations→future work folded in [xView3 fine-tune for 10m gap,
+  look-alike aug + cross-region for oil gap, paid all-vessel AIS for real dark-vessel]).
+  No separate Limitations section (matches reference paper: Results&Discussion →
+  Conclusion → References).
+- References: \begin{thebibliography} with all 13 \bibitem in IEEE style, ordered by first
+  appearance. Unified intro keys raynor2025→raynor2025science, paolo2024→paolo2024nature.
+  Verified: all 13 \cite keys resolve to a \bibitem (grep), no undefined refs.
+Paper sections now: Abstract, 1 Intro, 2 Related Work, 3 Methodology, 4 Results and
+Discussion (4.1-4.6 incl Discussion), 5 Conclusion, References.
+STILL PENDING (not paper prose):
+1. User must capture 4 figures into paper/: fig_ship_detection.png, fig_cfar_malacca.png,
+   fig_oil_segmentation.png, fig_dashboard.png. (Metric-curve figs already use
+   ../res/ship/metrics3.png + ../res/oil/metrics4.png.)
+2. Step 2 doc updates: README.md, PROJECT_PLAN.md, expected_systems.md still stale — bring
+   in line with actual system (no XGBoost/M2/SHAP, censored-CFAR, whole-scene-resize oil,
+   synthetic AIS, Trujillo not Krestenitis, no TerraSAR/SOS/real-AIS).
+3. Optional: LaTeX compile once the 4 figures exist (will error on missing images until then).
+
+**Chunk 7 DONE — figure-caption cleanup + Step 2 doc updates (2026-07-01).**
+- Removed all "[SCREENSHOT NEEDED...]" tags from the 4 figure captions + deleted the
+  scaffolding "Note on figures" paragraph (grep-verified 0 occurrences). Captions now clean;
+  placeholders still expect fig_ship_detection/fig_cfar_malacca/fig_oil_segmentation/
+  fig_dashboard .png in paper/.
+- **README.md: full rewrite** to the actual current system (Sentinel-1 only; CFAR+YOLO11m-OBB;
+  SegFormer whole-scene-resize; synthetic-AIS dark vessels; rule-based risk; Grad-CAM+rule
+  bars; HRSID + Trujillo Zenodo oil; honesty notes: no volume, OilSAM2→SegFormer, AIS proxy,
+  held-out 0.48). Dropped XGBoost/M2/BiGRU/SHAP/OpenDrift-M4/Streamlit from the doc.
+- **PROJECT_PLAN.md + expected_systems.md:** prepended a prominent "STATUS / OUTDATED"
+  correction block at the top of each (kept the historical body intact rather than risk
+  rewriting 785/280 lines) — states the real system + all the drift corrections (Trujillo
+  not Krestenitis, no SOS, no real AIS, dropped M2/M4/SHAP, area not volume).
+PAPER + DOCS now consistent with the shipped system. Remaining: user captures the 4 figures;
+optional LaTeX compile.
+
+---
+
+## 2026-07-01 — YOLO-only PNG demo path (HRSID exhibit)
+
+**Why:** dashboard needed a way to show how the trained YOLO11m-OBB performs on its own
+native-resolution training domain (HRSID), separate from the Sentinel-1 case-study
+pipeline. HRSID PNGs carry no georeferencing, so they can't go on the map.
+
+**What was added (second upload box, YOLO-only):**
+- Frontend: a second drop box under the Sentinel-1 `.tif` box, `.jpg`/`.jpeg`/`.png`
+  (HRSID `JPEGImages` are JPEGs) (`frontend/components/UploadPng.tsx`). On result it swaps the main area from the
+  MapLibre map to the annotated image (`PngResult.tsx`) and the sidebar from `SceneInfo`
+  to `PngInfo`. Coverage (Centre/Extent) is left blank — a PNG has no geo.
+- Backend: `POST /detect-png` → `backend/pipeline/png_demo.py::run_yolo_png`. Saves the
+  upload under `backend/data/png_demos/<id>/`, runs YOLO, draws OBB corners
+  (`obb.xyxyxyxy`) as green polylines onto the image (read via cv2 by content, so
+  extension-agnostic), serves the annotated PNG via a new
+  `/png-assets/{path}` static route. Returns `{ship_count, width, height, confidences}`.
+
+**Deliberately NOT run for the PNG path:**
+- **CFAR** — CFAR is the resolution-agnostic bolt-on for the 10 m/px Sentinel-1 domain
+  gap; on native HRSID (0.5-3 m/px) YOLO is in-domain and stands alone.
+- **SegFormer** — HRSID chips contain no oil.
+- **geo / AIS / risk / land-mask** — no georeferencing in a PNG.
+
+**Preprocessing decision (checked against the training script):**
+`src/train/hrsid_to_yolo.py` trains YOLO11m-OBB on the raw HRSID `JPEGImages` as-is
+(8-bit grayscale amplitude JPEGs) at `imgsz=640`. There is **no** dB→linear / Lee /
+percentile SAR preprocessing on that path — that chain is only for the Sentinel-1
+GeoTIFF pipeline (`sar_preprocess`). So the PNG is fed straight to YOLO, matching
+training exactly. Inference uses `imgsz=1024` (upsamples the ~800px HRSID image for
+small-ship recall) and `conf=0.25` (higher than the scene pipeline's 0.15 because HRSID
+is in-domain — no need to lower the threshold to claw back a resolution gap).

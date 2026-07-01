@@ -1,152 +1,138 @@
-# 🛰️ Maritime Security Intelligence — Explainable Multi-Modal AI
+# Maritime Security Intelligence — Explainable AI on Sentinel-1 SAR
 
-An end-to-end, explainable AI framework that fuses **satellite SAR imagery**, **AIS vessel
-tracks**, and **oceanographic data** to detect **dark vessels**, flag **illegal fishing**,
-segment **oil spills**, predict **spill drift**, and roll it all into an interpretable
-**maritime risk dashboard**.
+An end-to-end, explainable system that turns a **single Sentinel-1 SAR scene** into an
+operational maritime-security picture: it detects **ships**, flags **dark (non-broadcasting)
+vessels**, segments **oil spills**, scores **security and environmental risk**, and explains
+every decision — served through a FastAPI backend and a Next.js / MapLibre dashboard.
 
-> Built on Sentinel-1 SAR. The headline contribution is the **fusion layer** — linking a
-> detected spill to nearby *dark* (non-broadcasting) vessels as candidate responsible parties,
-> with explainable risk scoring — not six disconnected models.
-
----
-
-## 🎯 What it does
-
-| Module | Task | Approach |
-|--------|------|----------|
-| **1. Dark Fleet Monitoring** | Detect vessels in SAR, match to AIS, flag the unmatched as *dark* | YOLOv8/v11 on chipped SAR tiles + probabilistic AIS matching |
-| **2. Illegal Fishing Detection** | Classify fishing behavior, flag activity inside restricted zones | XGBoost (+ BiGRU) on AIS trajectories + geospatial zone join |
-| **3. Oil Spill Detection** | Pixel-level segmentation of slicks vs look-alikes | SegFormer (SOTA) vs DeepLabv3+/U-Net baseline |
-| **4. Oil Spill Drift Prediction** | Forecast spill trajectory & impact zones | OpenDrift / OpenOil (physics) + optional LSTM |
-| **5. Explainable AI** | Justify every decision | SHAP (tabular) + Grad-CAM (imagery) |
-| **6. Risk Assessment + Fusion** | Security & environmental risk scores; spill↔vessel linkage | Weighted scoring + spatial fusion → Streamlit dashboard |
+> One sensor, one scene. Because ships and oil are extracted from the *same* georeferenced
+> Sentinel-1 image, they are automatically co-registered and time-aligned. The contribution
+> is the **integrated, honest pipeline**, not six disconnected models.
 
 ---
 
-## 🗂️ Datasets
+## What it does
 
-| Need | Dataset | Access |
-|------|---------|--------|
-| Oil masks (M3, **primary**) | **Zenodo 8346860** (binary, ~47 GB) | [direct download](https://zenodo.org/records/8346860) |
-| ~~Oil masks (5-class)~~ | ~~Krestenitis / M4D~~ — **dropped** (gated; Zenodo binary is sufficient) | — |
-| SAR vessels (M1, **primary**) | **HRSID** (5,604 imgs, single-class) | Google Drive (see `PROJECT_PLAN.md` §4.5) |
-| SAR vessels (optional benchmark) | **xView3-SAR** | [iuu.xview.us](https://iuu.xview.us/) |
-| AIS / fishing / gap events | **Global Fishing Watch** `/v3/events` API | free token |
-| Zones | **EEZ** + **high seas** (marineregions.org, SHAPE-ZIP); MPA via GFW `regions.mpa` | free |
-| Ocean currents/wind | **Copernicus Marine** + **ERA5** | free API |
+| Stage | Task | Approach |
+|-------|------|----------|
+| **Ship detection** | Find every vessel in the scene | **Censored-mean CFAR** (training-free, resolution-agnostic) as the primary detector + **YOLO11m-OBB** (HRSID-trained) for oriented-box geometry; YOLO is kept only where it agrees with a CFAR hit |
+| **Oil-spill segmentation** | Pixel-level slick vs. sea | **SegFormer** (benchmarked against DeepLabV3+ / U-Net), whole-scene-resize inference matching training |
+| **Dark-vessel flagging** | Detections with no AIS match | AIS cross-check at the scene timestamp; a **synthetic AIS proxy** stands in because free historical AIS is unusable (see notes) |
+| **Risk + fusion** | Security / environmental scores | **Rule-based** zone-violation check + spill↔nearby-vessel linkage |
+| **Explainability** | Justify decisions | **Grad-CAM** (oil + ship) + **rule-contribution bars** |
 
-> See `PROJECT_PLAN.md` for the full dataset rationale, including why SARFishSample,
-> LS-SSDD, SSDD and SAR-Ship-Dataset were dropped in favour of HRSID.
+> Deliberately **not** included: XGBoost/illegal-fishing classifier, oil-drift forecasting,
+> and SHAP — these were dropped in favour of the rule-based zones + Grad-CAM above.
 
 ---
 
-## 🧱 Architecture
+## Datasets
+
+| Dataset | Used for | Notes |
+|---------|----------|-------|
+| **HRSID** (Wei et al., *IEEE Access* 2020) | Ship detection | 5,604 chips, 16,951 instances, 800×800; 3,642 train / 1,962 test + 400 negatives |
+| **Trujillo-Acatitla et al. 2024** (Zenodo [8346860](https://zenodo.org/records/8346860) / [8253899](https://zenodo.org/records/8253899) / [13761290](https://zenodo.org/records/13761290)) | Oil segmentation | Sentinel-1 C-band VV/VH, Sigma0 in dB, 2048×2048. Parts I+II train/val, **Part III held out as test** |
+
+> Live inference runs on **Sentinel-1 C-band IW GRD** scenes (VV/VH, ~10 m/px) pulled from
+> Google Earth Engine (`COPERNICUS/S1_GRD`).
+
+---
+
+## Headline results
+
+- **Ship detection (HRSID test):** YOLO11m-OBB **mAP@50 = 0.938** (best of YOLOv8m 0.910 /
+  YOLO26m 0.908 / YOLO11m-OBB 0.938). Finding: oriented-box *geometry* beats model recency.
+  A scale-augmented fine-tune (mAP@50 0.910) adds robustness at 10 m/px.
+- **Medium-resolution detection:** on a dense Sentinel-1 anchorage scene, censored-mean CFAR
+  recovers **257** vessels where the HRSID-trained YOLO alone is inconsistent (0–165).
+- **Oil segmentation:** SegFormer validation OilIoU **≈ 0.79**, honest **held-out Part III
+  test OilIoU ≈ 0.48** — the validation→test gap (driven by look-alikes) is reported openly.
+
+---
+
+## Architecture
 
 ```
-Sentinel-1 SAR ─┐
-AIS tracks ──────┼─► Preprocessing ─► Feature Extraction ─► [M1 Dark Fleet]
-Oceanographic ──┤                                          [M2 Illegal Fishing]
-Zone shapefiles ─┘                                          [M3 Oil Spill Seg]
-                                                                  │
-                                                            [M4 Drift Forecast]
-                                                                  │
-                                                  [M5 Explainability: SHAP + Grad-CAM]
-                                                                  │
-                                    [M6 Fusion → Security + Environmental Risk Scores]
-                                                                  │
-                                              📊 Integrated Streamlit Dashboard
+Sentinel-1 GRD (.tif / GEE pull)
+   └─ SAR preprocessing
+        ├─ oil branch:  dB→linear → 7×7 Lee → percentile-norm → [VV,VH,VH] → resize 512
+        └─ ship branch: dB-window normalize (VV [-25,0], VH [-30,-10] dB), no Lee
+   ├─ SHIP: censored-mean CFAR (primary) + YOLO11m-OBB (confirm/geometry) → land mask
+   ├─ OIL:  SegFormer whole-scene-resize → threshold → lon/lat polygons + area (km²)
+   ├─ DARK VESSELS: AIS match at scene time (synthetic proxy when real AIS absent)
+   ├─ RISK: rule-based zone violation + security / environmental scores
+   └─ EXPLAIN: Grad-CAM (oil/ship) + rule-contribution bars
+          │
+   FastAPI backend  ──GeoJSON layers + metrics + overlays──►  Next.js / MapLibre dashboard
 ```
 
 ---
 
-## ⚙️ Tech Stack
+## Tech stack
 
-**ML/CV:** PyTorch · segmentation-models-pytorch · HuggingFace Transformers (SegFormer) ·
-Ultralytics YOLO · XGBoost · scikit-learn · albumentations
-**Explainability:** SHAP · pytorch-grad-cam
-**Geospatial:** rasterio · geopandas · shapely · pyproj
-**Drift:** OpenDrift (OpenOil)
-**Data feeds:** GFW client · earthengine-api/geemap · copernicusmarine · cdsapi
-**App:** Streamlit · Folium / kepler.gl · plotly
-**Compute:** local RTX 3050 (dev) · Colab Pro (training) · Lightning.ai (storage/long jobs)
-**Tracking:** Weights & Biases / TensorBoard
+**ML / CV:** PyTorch · HuggingFace Transformers (SegFormer) · Ultralytics YOLO ·
+segmentation-models-pytorch · OpenCV / SciPy (CFAR) · albumentations
+**Explainability:** pytorch-grad-cam
+**Geospatial:** rasterio · geopandas · shapely · pyproj · Google Earth Engine / geemap
+**Backend:** FastAPI · Pydantic
+**Frontend:** Next.js (App Router, TS) · Tailwind · MapLibre GL (CARTO dark basemap, no token)
+**Training / tracking:** Kaggle 2×T4 (ships) · Lightning H100 (oil) · Weights & Biases
 
 ---
 
-## 📦 Project Structure
+## Repository layout
 
 ```
 .
-├─ PROJECT_PLAN.md          # full plan: models, datasets, phasing, justifications
-├─ README.md
-├─ requirements.txt
-├─ data/                    # gitignored — datasets land here
-│  ├─ oil/                  # Krestenitis / Zenodo
-│  └─ vessels/              # SARFishSample → GRD subset
-├─ notebooks/
-│  ├─ 01_dark_fleet.ipynb
-│  ├─ 02_illegal_fishing.ipynb
-│  ├─ 03_oil_spill_seg.ipynb
-│  ├─ 04_oil_drift.ipynb
-│  └─ 05_06_xai_risk.ipynb
 ├─ src/
-│  ├─ data/  models/  fusion/  explain/  viz/
-└─ app/
-   └─ dashboard.py          # Streamlit entrypoint
+│  ├─ data/       sar_preprocess.py (dB→linear, Lee, dB-window, GEE pull), loaders.py
+│  ├─ models/     detection.py (CFAR + YOLO), segmentation.py (SegFormer/DeepLab/UNet),
+│  │              train_segmentation.py, eval_threshold.py
+│  ├─ fusion/     ais_matching.py (match + synthetic proxy + zone join), risk_scoring.py
+│  └─ explain/    gradcam.py
+├─ backend/       app.py (FastAPI), pipeline/{run_scene, segment, geo, serialize}.py
+├─ frontend/      Next.js dashboard (upload → scene metadata + oil extent → map)
+├─ paper/         maritime_paper.tex (research write-up) + references/
+└─ research.md    running lab notebook (source of truth for decisions/results)
 ```
 
 ---
 
-## 🛣️ Build Phases (floor-first)
-
-- **Phase 0** — Setup & data: request M4D, pull Zenodo, clone SARFishSample, GFW token.
-- **Phase 1** — 🟢 *Safe floor:* Oil segmentation (M3). Baseline → fix 1.2% class imbalance (Dice+Focal) → SegFormer. Beat ~0.54 oil IoU.
-- **Phase 2** — Dark fleet (M1): chip tiles → YOLOv8 → AIS match → flag dark.
-- **Phase 3** — Illegal fishing (M2): XGBoost/BiGRU + zone join.
-- **Phase 4** — Drift (M4): OpenOil + Copernicus/ERA5.
-- **Phase 5** — XAI + Risk + Fusion (M5/M6).
-- **Phase 6** — Streamlit dashboard integrating all outputs.
-
-> Each phase is independently demo-able — the project degrades gracefully if time runs out.
-
----
-
-## 🚀 Quickstart
+## Quickstart
 
 ```bash
-# 1. Environment
-python -m venv .venv && source .venv/bin/activate      # (Windows: .venv\Scripts\activate)
+# 1. Backend (serves precomputed case studies; runs the pipeline on upload)
 pip install -r requirements.txt
+uvicorn backend.app:app --port 8000 --app-dir .
 
-# 2. Get the oil dataset (M3 floor)
-#    → download Zenodo record 8346860 into data/oil/  (images/ + masks/)
+# 2. Frontend
+cd frontend && npm install && npm run dev        # → localhost:3000
 
-# 3. Get the vessel dataset (M1)
-#    → download HRSID (Google Drive links + COCO→YOLO/OBB conversion: PROJECT_PLAN.md §4.5)
-
-# 4. Train the floor first (Phase 1 — oil segmentation)
-python src/models/train_segmentation.py --model deeplabv3+ --epochs 50 \
-       --batch_size 16 --dataset_type zenodo --data_root data/oil
-
-# 5. Run the dashboard (works now on demo data; live wiring is pending)
-streamlit run app/dashboard.py
+# 3. Process a scene: drag a Sentinel-1 GeoTIFF into the dashboard, or
+python -m backend.pipeline.run_scene --scene-tif scene.tif --id demo \
+       --title "Demo" --acquired 2024-03-01T00:00:00Z \
+       --yolo checkpoints/vessel/hrsid_yolo11m_obb/best.pt \
+       --segformer checkpoints/oil/best_segformer.pt
 ```
 
----
-
-## 📊 Evaluation
-
-- **Segmentation (M3):** per-class IoU/Dice, oil-class IoU vs 0.54 baseline, mask overlays.
-- **Detection (M1):** F1/mAP, dark-vessel flags vs AIS overlay.
-- **Fishing (M2):** Precision/Recall/F1/ROC-AUC, flagged tracks inside MPA polygons.
-- **Drift (M4):** plume plausibility vs current/wind fields.
-- **XAI (M5):** SHAP factor breakdown + Grad-CAM saliency on slicks/vessels.
+Checkpoints live on the private HF repo `shaunmarvell/maritime-security-intelligence`
+(`vessel/` and `oil/` subfolders).
 
 ---
 
-## 📝 Notes
+## Honesty notes
 
-- Deviates from the original spec's TensorFlow/Keras → **PyTorch** (SOTA models are PyTorch-native).
-- Optical (Sentinel-2/Landsat) is intentionally **out of scope** — SAR covers all tasks here.
-- See [`PROJECT_PLAN.md`](./PROJECT_PLAN.md) for full model justifications and research citations.
+- **No oil volume.** SAR yields slick **area / extent**, never thickness or volume.
+- **Oil model = SegFormer.** The "OilSAM2" SOTA had no released code and silently falls back
+  to SegFormer; results are reported as SegFormer.
+- **AIS is a proxy.** Free historical AIS (Global Fishing Watch) exposes only gap/absence
+  events, lags 72–96 h, and covers fishing vessels only, so it cannot do same-scene presence
+  matching. The dark/normal split is produced by a transparent synthetic-AIS proxy; a paid
+  all-vessel feed is future work.
+- **Report the held-out number.** Oil accuracy is reported on the disjoint Part III test
+  set (~0.48 OilIoU), not the optimistic validation figure (~0.79).
+- **Ship resolution gap.** HRSID is finer-resolution than Sentinel-1 IW (~10 m/px); CFAR
+  bridges the gap at inference, and xView3-SAR fine-tuning is the principled long-term fix.
+
+See [`research.md`](./research.md) for the full decision/result log and
+[`paper/maritime_paper.tex`](./paper/maritime_paper.tex) for the write-up.
