@@ -1506,6 +1506,28 @@ STILL PENDING (not paper prose):
 PAPER + DOCS now consistent with the shipped system. Remaining: user captures the 4 figures;
 optional LaTeX compile.
 
+**Chunk 8 — external Opus review, verified + fixed (2026-07-01).** A second session
+reviewed the paper vs research.md and flagged 10 items. Verified each against res/ +
+research.md; applied fixes:
+- **YOLO26m mAP50 = 0.908 is CORRECT** (from res/ship/yolo26m.png: mAP50 0.908, R 0.802).
+  research.md's earlier "M1 FINAL RESULTS" table/prose (0.911 mAP50 / 0.816 R) were written
+  from memory and are STALE — the SCREENSHOT is authoritative. Paper keeps 0.908/0.802.
+  → Treat res/ship/*.png as ground truth for ship metrics, not the older research.md table.
+- Table 3 (oil) bolding fixed: val best is **b4 0.799** (was wrongly bolding b5 0.795);
+  now bold best-per-column (b4 val 0.799, b5 test 0.484, b5 gap -0.311) + caption updated
+  to "best per column" and notes test OilIoU is at argmax τ=0.5.
+- Discussion: "most accurate on validation" → "most accurate architecture on both
+  validation and held-out test" (b4 is top val; SegFormer tops test too); "roughly 0.3 IoU
+  drop" → "≈0.3 for SegFormer, ≈0.4 for the CNN baselines."
+- −18 dB clash fixed: dropped the "sea ≈−18 dB in VH" parenthetical in the dB-window para;
+  land-mask now stated as a −18 dB threshold on the MEAN of both pols + morphological
+  opening (only solid land survives) — matches run_scene._land_mask (mean(VV,VH)).
+- "four oil segmenters" → "four model variants across three architectures" (consistent
+  with Fig 5's three-architecture bar).
+- Scale-augmented YOLO **0.910** (the 0.938→0.910 regression) now appears in 4.3
+  (was orphaned in abstract/intro only); explains the collision with YOLOv8m's 0.910.
+- Left as-is (not errors): b5 faster than b4 (logged), U-Net params "---" (no verified count).
+
 ---
 
 ## 2026-07-01 — YOLO-only PNG demo path (HRSID exhibit)
@@ -1539,3 +1561,137 @@ GeoTIFF pipeline (`sar_preprocess`). So the PNG is fed straight to YOLO, matchin
 training exactly. Inference uses `imgsz=1024` (upsamples the ~800px HRSID image for
 small-ship recall) and `conf=0.25` (higher than the scene pipeline's 0.15 because HRSID
 is in-domain — no need to lower the threshold to claw back a resolution gap).
+
+### Paper proofread pass — `maritime_paper.tex` audit (2026-07-01)
+
+Full read-through of `paper/maritime_paper.tex` cross-checked against this research log.
+Findings to fix before submission:
+
+**Confirmed errors**
+1. **YOLO26m mAP@50 = 0.908 in the paper (Table 2, line 595 + text line 611) but this
+   log records 0.911** (see M1 note "YOLO26m … scores 0.911"). Numbers disagree — pick
+   the true value and make Table 2 + prose match. Conclusion ("≈ YOLOv8m 0.910") holds
+   either way.
+2. **Table 3 (oil) bolds the wrong validation cell.** val OilIoU bold is on SegFormer-b5
+   (0.795), but the max val is SegFormer-b4 (0.799) — b4 was the better val checkpoint.
+   Bold belongs on b4. Also the caption says "Best **test** result in bold" yet val and
+   val→test columns are bolded too (scope mismatch).
+3. **"most accurate model on validation" (Discussion, line 767–768) is false for the
+   deployed b5.** b5 val = 0.795 < b4 val = 0.799. Only "most robust" (smallest val→test
+   drop) is true for b5; it is most accurate on **test**, not validation. Reword.
+
+**Ambiguities / imprecision**
+4. **"−18 dB" overloaded.** Line 393 says open sea ≈ −18 dB in VH; line 439 says the
+   land/water mask threshold is −18 dB. As written the mask would cut the sea. Real mask
+   is on **mean(VV,VH)**, not VH — paper must state the channel to remove the apparent
+   contradiction.
+5. **"every model loses roughly 0.3 IoU val→test" (line 769) understates the CNNs**
+   (U-Net −0.38, DeepLab −0.42; only SegFormer ~0.31). Say "0.3–0.4".
+6. **Count mismatch:** Fig 5 caption "three benchmarked architectures" (line 700) vs
+   "four oil segmenters" (line 673) / 4 table rows. Standardise (3 architectures = 4
+   variants).
+7. **0.910 fine-tuned mAP** (Abstract line 59, Intro line 148) is correct per this log
+   (scale-aug run) but (a) never appears in Results/any table — orphan claim; (b) equals
+   YOLOv8m's baseline 0.910, confusing without noting it's the 0.938→0.910 regression.
+
+**Minor:** test OilIoU 0.484 is the argmax-0.5 value while methodology's deploy threshold
+is τ∈[0.30,0.35] (unstated in table); SegFormer-b5 (82M) trains faster (1h15m) than b4
+(64M, 1h22m) — logged but counterintuitive; U-Net params column is "---".
+
+**Verified consistent (no action):** HRSID counts (5,604 / 3,642+1,962 / 16,951 /
+5,922 test / +400 neg); oil Parts I+II ≈2,570 (85/15) and Part III 450=150×3; CFAR
+257 = 141+116; mAP deltas +2.8 and recall +5.1; cited-work count (10); risk-score caps
+and area units.
+
+### Chunk 9 — external Fable review, verified + fixed (2026-07-06)
+Second external review (Claude Fable). Verified every item vs research.md before acting.
+
+**Fixed in maritime_paper.tex (valid/real):**
+- **AIS contradiction (#1, real bug):** intro contribution (iii) said "matches detections
+  against historical AIS from Global Fishing Watch" — contradicted methodology's synthetic
+  proxy. research.md:1427 confirms real AIS NEVER usable. Rewrote (iii) to "cross-checks
+  detections against AIS---using a transparent synthetic proxy in the absence of a usable
+  free historical feed." Now consistent abstract/intro/methodology.
+- **Silent-fallback wording (#5):** intro + Discussion "falls back silently / silently
+  degrades to SegFormer" → "could not be benchmarked, so we train and report SegFormer
+  directly." Reads as an honest research choice, not a runtime model swap.
+- **Spelling (#6):** abstract polarization→polarisation (x2), generalization→generalisation.
+  Whole paper now British -isation.
+- **IUU citation (#7):** "more than a fifth" → "as much as a fifth of the global
+  catch~\cite{agnew2009}"; added Agnew et al. 2009 PLoS ONE bibitem.
+- **Six-day revisit (#8):** softened to "six-day repeat cycle when two satellites are
+  operational" (S1A retired 2026-06-29, S1B failed 2022 — bare 6-day was optimistic).
+- **Band-order caveat (round-2, honesty):** added footnote in Polarisation para —
+  band 1 (nominal VV) darker than band 2 (nominal VH), labels may be swapped; informative
+  channel is band 2 (~9 dB oil contrast) regardless of label. Matches research.md:58-65.
+- **mAP eval clarity (#2):** §4.3 — added that 0.938→0.910 is both HRSID-test, and the
+  10 m/px robustness gain is qualitative because no Sentinel-1 ground truth exists.
+
+**Rejected (Fable was wrong for our project):**
+- Fable's "validate against GFW historical, live=synthetic" reframing — contradicts
+  research.md (GFW never usable: gap-events, 72-96h lag, fishing-only). Would re-introduce a
+  killed overclaim. Kept fully-synthetic framing.
+
+**Already fixed / no action:** val IoU stated (Table 3 + Discussion); [VV,VH,VH] justified
+(Polarisation para); stale results handled (argmax@0.5 headline, sweep as deployment tuning);
+georeferencing only claimed for live GEE scene; YOLO26m vs YOLO11m consistent (26m is a
+benchmark row, 11m-OBB owns 0.938/0.910).
+
+**Left as user decisions:** (a) title "Illegal-Fishing Flagging" vs "Dark-Vessel and
+Zone-Violation Flagging"; (b) reintroduce HRSID TerraSAR-X/TanDEM-X composition (user
+previously said do not reintroduce, research.md:1431-1432). #10 abstract trim = optional/stylistic, left as-is.
+
+### Chunk 10 — full re-read consistency audit (2026-07-06)
+Re-read ALL of research.md + maritime_paper.tex after the Chunk 9 fixes. Chunk 9 edits
+verified present in the tex (AIS proxy in contribution iii, "could not be benchmarked",
+British spellings, agnew2009, softened six-day revisit, band-order footnote, §4.3 mAP
+eval clarity). User rulings (2026-07-06): #1 figure paths are CORRECT for the Overleaf
+project layout (local repo differs — do not "fix"); #2 the 4 qualitative figures exist
+in Overleaf, just not locally; #4 "Results" section title is intentional; #5 FIXED
+(Conclusion "reported as its true SegFormer fallback" → "could not be benchmarked so we
+report a directly trained SegFormer instead"). NOTE: paper is compiled on Overleaf —
+local .tex edits must be manually mirrored there.
+
+**#3 and #6 FIXED (2026-07-06), grounded in the actual code:** verified the two
+preprocessing chains in source before editing —
+- Oil: `backend/pipeline/segment.py:segment_scene_resized` → `sar_preprocess.preprocess_sar_bands`
+  = per-band dB→linear (`db_to_linear`), 7×7 `lee_filter` (linear scale), `normalize_band`
+  99.5-pct clip → [0,1] (nodata-aware) → `[b0,VH,VH]` → whole-scene resize 512 → ImageNet norm.
+- Vessels: `src/models/detection.py:chip_sar_scene` = fixed `DB_WINDOWS` VV [−25,0] dB /
+  VH [−30,−10] dB → clip [0,1] → `[VV,VH,VH]`, NO Lee, NO dB→linear; `cfar_detect` runs on
+  linear VH power `10**(db/10)` + −18 dB land mask (61px open, 10px dilate).
+Edits: §3 intro para "shared preprocessing front-end" → "each branch applies the
+preprocessing matched to its own training distribution"; Fig 1 caption now says the
+diagram's single preprocessing block is drawn for compactness and spells out both real
+chains (oil: dB→linear+Lee+percentile; vessel: dB-window, CFAR on linear VH; both stack
+[VV,VH,VH]); caption "historical AIS" → "AIS". #6: abstract "cross-sensor and
+cross-region" → "resolution and cross-region"; contribution (4) "cross-sensor
+(X/C/L-band)" → "train–deployment resolution gap and cross-region domain gap...remedy
+for the former" (no X/L-band analysis exists in the paper; TerraSAR-X/SOS deliberately
+dropped). REMEMBER: mirror all Chunk-10 tex edits (5 hunks) into Overleaf. The
+methodology.png diagram itself still shows one preprocessing box + a GFW/historical-AIS
+source box — optional user redraw; the caption now covers the discrepancy.
+
+Original residual findings list (for reference; 1/2/4 = non-issues per user, 3/5/6 fixed):
+1. **Compile blocker — inconsistent figure paths.** `methodology.png` is referenced bare
+   (assumes compile dir = paper/) but the metric curves are `res/ship/metrics3.png` and
+   `res/oil/metrics4.png` (assume compile dir = repo root; earlier draft used `../res/...`).
+   No single compile directory satisfies both. Fix: make both `../res/...` again or copy
+   the two PNGs into paper/.
+2. **4 qualitative figures still missing** from paper/: fig_ship_detection.png,
+   fig_cfar_malacca.png, fig_oil_segmentation.png, fig_dashboard.png — LaTeX will not
+   compile until captured (user action).
+3. **"Shared preprocessing front-end" contradiction.** §3 intro para + Figure 1 caption
+   still say a *shared* SAR front-end (dB→linear, Lee, percentile, [VV,VH,VH]) feeds both
+   branches — contradicts §3.2, which (correctly, per the 2026-06-29 methodology
+   corrections) states the two branches use DISTINCT preprocessing (oil: dB→linear+Lee+
+   percentile; ships: dB-window only, no Lee).
+4. **Section 4 header is "Results"** but the Chunk-5 revision decision (research.md) was
+   "Results and Discussion" (Discussion is subsection 4.6). Rename or accept.
+5. **Conclusion still uses "fallback" phrasing** ("is reported as its true SegFormer
+   fallback") — the same wording Chunk 9 fix #5 removed from intro/Discussion; reword to
+   the "could not be benchmarked / report SegFormer directly" framing.
+6. **Contribution (4) claims "cross-sensor (X/C/L-band)" analysis** — the body only
+   analyses the resolution gap (HRSID→10 m) and the cross-region oil gap (Juarez);
+   no X/C/L-band analysis exists (TerraSAR-X composition was deliberately dropped).
+   Trim to "resolution and cross-region domain gaps".
