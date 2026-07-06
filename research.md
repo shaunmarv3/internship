@@ -1672,6 +1672,35 @@ dropped). REMEMBER: mirror all Chunk-10 tex edits (5 hunks) into Overleaf. The
 methodology.png diagram itself still shows one preprocessing box + a GFW/historical-AIS
 source box — optional user redraw; the caption now covers the discrepancy.
 
+### IEEE Access conversion — paper_ieee_access/ (2026-07-06)
+Final internship deliverable: the maritime paper re-set in the EXACT format of the
+Amazon-wildfire IEEE Access template (`amazon_wildfire_detection/access.tex`,
+ieeeaccess.cls). Created `paper_ieee_access/` containing: all template support files
+(ieeeaccess.cls, IEEEtran.*, spotcolor.sty, t1-* fonts/maps/fd, logo/bullet PNGs),
+local images (methodology.png; ship_metrics.png = res/ship/metrics3.png;
+oil_metrics.png = res/oil/metrics4.png), and a new `access.tex`. Format mirrored from
+the template: \history/\doi placeholders, \uppercase authors (NAVANEETH BHASKAR +
+SHAUN MARVELL RODRIGUES, same NMAMIT address, corresponding = Shaun), \markboth
+"Rodrigues \headeretal", \PARstart intro, section order Intro/Related Works/Methodology/
+Results and Discussion (Discussion subsection)/Conclusion/Acknowledgment (same NMAMIT
+text as template), NUMERIC \cite{1..14} bibliography ordered by first appearance
+(1=agnew2009 … 14=juarez2025crossdomain), and ALL figures/tables gathered after the
+references as [p]/figure*/table* floats with |lined| tabularx + arraystretch 1.2, \EOD.
+Content = maritime_paper.tex with all Chunk 9/10 fixes carried over. 4 qualitative
+figures (fig_ship_detection/fig_cfar_malacca/fig_oil_segmentation/fig_dashboard .png)
+must be copied from the user's Overleaf maritime project into the new project.
+
+**Post-compile fixes (user's Overleaf render, 2026-07-06):**
+1. Risk-score equations S/E overflowed into column 2 → split each across two lines
+   (align with \nonumber + continuation indent).
+2. Blank page between references and the figure section → the first figure* (~10cm)
+   was below LaTeX's default \dblfloatpagefraction=0.5 so its float page was deferred.
+   Fix: \floatpagefraction/\dblfloatpagefraction → .05 (+ raised float counters) just
+   before the \clearpage that opens the figure block.
+3. All end-matter captions shortened to template-style one-liners (full explanations
+   already in body text); methodology caption now just points to §3.2 for the
+   per-branch preprocessing.
+
 Original residual findings list (for reference; 1/2/4 = non-issues per user, 3/5/6 fixed):
 1. **Compile blocker — inconsistent figure paths.** `methodology.png` is referenced bare
    (assumes compile dir = paper/) but the metric curves are `res/ship/metrics3.png` and
