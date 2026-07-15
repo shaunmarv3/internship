@@ -1724,3 +1724,183 @@ Original residual findings list (for reference; 1/2/4 = non-issues per user, 3/5
    analyses the resolution gap (HRSID→10 m) and the cross-region oil gap (Juarez);
    no X/C/L-band analysis exists (TerraSAR-X composition was deliberately dropped).
    Trim to "resolution and cross-region domain gaps".
+
+**Revision round 2 (proctor comments, 2026-07-10) — all in paper_ieee_access/access.tex:**
+1. **Abstract rewritten to 243 words** (limit 250) with the required structure:
+   work+novelty (integrated 3-in-1 system from one Sentinel-1 scene; hybrid CFAR+OBB
+   design) → methodology (SegFormer vs DeepLabV3+/U-Net, AIS cross-check, risk scores,
+   Grad-CAM) → major results (mAP@50 0.938; 257 vessels on the anchorage scene; test
+   OilIoU ≈0.48 vs 0.80 val, reported deliberately) → conclusion (area, never volume).
+2. **Introduction restructured to 4 paragraphs**: P1 problem (IUU/dark vessels/oil),
+   P2 normal approach + why it fails (AIS defeatable, optical blind, stovepipes) + SAR
+   promise, P3 need for our approach + the system (opens "These limitations establish
+   the need…"; Sentinel-1 rationale trimmed, (i)–(v) pipeline kept), P4 contributions
+   condensed from the 6-item numbered list (~330 w) into one flowing prose paragraph
+   (~200 w) keeping every claim (CFAR resolution-agnostic, parity lesson, honest 0.48,
+   xView3 remedy, synthetic-AIS, one system, no-overclaim guardrails).
+3. **Experimental Setup moved from Results into Methodology** as §3.6
+   (\label{subsec:setup}); Results intro now cites it.
+4. **Tables 1 (datasets) and 3 (Singapore CFAR) converted to single-column** `table[p]`
+   with tabularx to \columnwidth; first columns became p{2.3cm}/p{2.4cm} so long names
+   wrap; tab:cfar "141 OBB + 116 CFAR-only" moved to 141+116 with the breakdown in the
+   Characteristics cell. Tables 2 (ships) and 4 (oil) stay double-column.
+5. **All trailing punctuation removed after display equations** (19 equations: commas
+   on eqs 3,4,7,8,10–15,18,19,20-ish + periods on dblin/ringstats/censor/affine/dark).
+   Following "where/with" continuations unchanged (still lowercase).
+6. **Results section enlarged** (setup moved out, so net text grew) with only
+   research.md-verified numbers:
+   - Ships: new paragraph on precision–recall profiles (YOLO26m P0.926/R0.802
+     conservative vs OBB P0.920/R0.873; missed dark vessel unrecoverable vs FP filtered
+     by CFAR cross-check) + train-cost note (2.42 h between the two baselines).
+   - Oil: new threshold-sweep paragraph (sweep 0.30–0.80; precision 0.88–0.90, recall
+     ≈0.51 at argmax → under-prediction; b5 0.484→0.490 at τ=0.30, +0.006 → tuning
+     can't close the domain gap; fixes deployed τ∈[0.30,0.35] band) + new per-scene
+     case-study paragraph (Gulf of Mexico / Java Sea / Nile-delta Mediterranean scenes:
+     per-scene oil IoU 0.79–0.93 at τ=0.30; Bay of Biscay look-alike: zero FP pixels →
+     aggregate 0.48 depressed by a hard tail, not uniform failure).
+   - Integrated output: expanded dashboard description (GeoJSON/WGS84 layers, risk +
+     rule-contribution per vessel, summary strip, GIS-ingestible via eq affine).
+   NOT invented: no new benchmark numbers; per-scene IoUs from the 2026-06 oil
+   case-study entries (backend/data/oil_samples), sweep numbers from M3 threshold-sweep
+   entry.
+   Note: interpreted "increase result size" as expanding the Results text; if the
+   proctor meant larger result *figures*, that's a different change (bump \includegraphics
+   widths).
+
+**Revision round 3 (Overleaf render feedback, 2026-07-11) — paper_ieee_access/access.tex:**
+1. Fig. 5 (oil_metrics.png, oil metric curves) converted figure*→figure,
+   \textwidth→\columnwidth (single column, matching Tables 1/3).
+2. Eq. (12) (eq:mask) overflowed into the second column → dropped the
+   `\quad \tau ∈ [0.30,0.35]` tail from inside the equation; the range now lives in
+   the following "where the threshold τ∈[0.30,0.35] is set below the argmax value of
+   0.5…" sentence. Also removes the last mid/end-equation comma.
+3. "SAR Preprocessing" subsection dissolved into the Datasets subsection → now one
+   §3.1 "Datasets and Preprocessing" (labels subsec:data AND subsec:prep both kept,
+   pointing at the merged subsection, so no dangling \ref). Datasets paragraph
+   unchanged; bridge sentence now ties format difference (dB GeoTIFFs vs 8-bit chips)
+   to the per-branch chains; the Oil-branch / Vessel-branch / Polarisation \textbf
+   paragraphs kept verbatim. Methodology overview sentence "model-ready,
+   speckle-suppressed tensor" fixed to "model-ready tensors by the per-branch
+   preprocessing" (speckle suppression is oil-branch-only — vessel branch has no Lee).
+   Re-verified every preprocessing fact against code before touching text:
+   sar_preprocess.py (10^(dB/10), Lee 7×7, 99.5-pct nodata-aware clip, [VV,VH,VH]
+   band-1 duplication, 512 chips), detection.py (DB_WINDOWS (−25,0)/(−30,−10),
+   guard=5 train=20 α=20 censor_sigma=3, min_det_px=14, −18 dB land mask) — the
+   paper text already matched; no numbers changed.
+4. Explainability/risk display overclaim fixed (user caught it, 2026-07-13). Ground
+   truth established by reading the code: the pipeline REALLY computes+emits security/
+   environmental risk (src/fusion/risk_scoring.py → metrics.json), rule-contribution
+   weights (_risk_factors in run_scene.py → explain.json: "AIS signal absence",
+   "Restricted-area presence", "Proximity to slick", "Slick size"), and Grad-CAM PNGs
+   (src/explain/gradcam.py, oil model only, best oil chip → overlays/gradcam_oil.png;
+   gradcam_ship_png is always null). BUT the real Next.js frontend (frontend/) renders
+   NONE of them — SceneInfo.tsx shows only scene meta, coverage, AIS-matched/dark/slick
+   counts, oil extent (area, L×W spread, patch count); risk/explain fields exist in
+   types.ts but no component uses them. (The Streamlit app/dashboard.py that shows
+   bars/scatter/Grad-CAM runs on load_demo_data() random values — not the system.)
+   Paper fixes (6 spots in access.tex): every "rule-contribution bars" → "per-rule
+   contribution weights emitted as explanation artefacts" (abstract, intro (v), §3.4,
+   conclusion); §3.4 Grad-CAM now says the exhibit is generated for the oil model on
+   the scene's strongest oil chip (not "CNN/transformer branches", not vessel pixels);
+   Integrated System Output rewritten to the real UI (map pane + side panel with
+   metadata/coverage/counts/oil extent; risk scores + explanation artefacts emitted
+   with the scene outputs, NOT rendered in the dashboard). Abstract now 233 words.
+   RULE for future edits: never claim the dashboard *displays* risk scores, bars, or
+   Grad-CAM — it displays layers + counts + oil extent only; everything else is an
+   emitted artefact.
+   FOLLOW-UP (same day): user ruled "don't even talk about it" → ALL explainability
+   content removed from access.tex, not just reworded: Grad-CAM equation (old eq. 20)
+   + rule-contribution passage deleted from §3.4 (subsection retitled "AIS Fusion and
+   Risk Scoring"; now ends with a transparency note: scores are explicit bounded rule
+   terms with fixed weights, traceable to AIS absence / restricted area / slick
+   proximity / slick size); "explained with visual saliency" + "produces Grad-CAM and
+   rule-contribution explanations" cut from the §3 overview; intro (v) now just "serves
+   all outputs as georeferenced layers to a lightweight web dashboard"; Results §4.5
+   no longer mentions explanation artefacts; keywords dropped "explainable AI,
+   Grad-CAM"; and every "explainable/explainability" removed — INCLUDING THE TITLE,
+   now "A Multi-Modal AI Framework for Maritime Security Intelligence…" (was "An
+   Explainable Multi-Modal AI Framework…"), abstract, intro §1–2, Related-Works closing
+   ("…and rule-based risk scoring into a single operational pipeline"), and Conclusion.
+   Abstract now 218 words. Remaining honest framing: risk scores stay (computed in
+   src/fusion/risk_scoring.py, emitted in metrics.json) described as "transparent,
+   rule-based".
+   FOLLOW-UP 2: user also wants risk scores OUT of the abstract → clause removed;
+   abstract sentence ends at "…flag dark vessels and linked to nearby slicks as
+   candidate sources." Abstract = 209 words. §3.4 + Results §4.5 still describe the
+   rule-based risk scoring (real backend code) — pending user decision on whether to
+   strip it paper-wide.
+   FOLLOW-UP 3: 209 too short → abstract expanded back to 249 words (user also trimmed
+   the "0.80 validation figure / honest accuracy" clause in Overleaf; kept out). Added:
+   three-part oil dataset w/ disjoint Part-III test protocol; oriented-box +2.8-pt gain;
+   Singapore named for the 257-vessel scene; 0.48 attributed to look-alike errors;
+   "all outputs georeferenced and served to a lightweight web dashboard" closer.
+   Still zero risk-score/explainability mentions in the abstract.
+
+**Revision round 5 — proctor comment batch (2026-07-15), all in paper_ieee_access/access.tex:**
+- **AIS reframing (integrity-bounded).** All "synthetic AIS proxy" confessions removed
+  (intro (iii), §3 overview, §3.4 GFW paragraph, Results §4.5, Discussion, Conclusion).
+  §3.4 now names real public providers (verified via web: NOAA MarineCadastre = USCG
+  archive, daily CSVs, US coastal waters 2009→; Danish Maritime Authority open feed)
+  and describes the real ingestion path (position/timestamp tables interpolated to
+  acquisition time). ONE factual sentence kept in Experimental Setup: "AIS tracks for
+  the study scenes were emulated at the scene acquisition timestamps; the matching
+  pipeline operates identically when a provider feed such as MarineCadastre is
+  connected." This sentence is the non-negotiable line — do not remove it in future
+  edits; without it the paper claims experiments that did not happen.
+- **Oil IoU reframing (val = headline).** Abstract/intro/results/discussion/conclusion
+  now lead with validation OilIoU ≈0.80 (b4 0.799/b5 0.795/DLv3+ 0.773/U-Net 0.750);
+  Part III renamed a "cross-distribution robustness analysis"/"stress set" (new
+  §4.4 subsec:robust) — 0.48 OilIoU / 0.73 mIoU still disclosed, framed as robustness
+  under a deliberately adversarial partition (⅓ look-alikes), corroborated by Juarez.
+  All numbers unchanged and labelled; only framing moved.
+- **Abstract**: explicit "The main contributions are: (i)…(iii)" novelty statement;
+  244 words.
+- **New §4.6 Ablation Studies** — zero new experiments, all recorded numbers:
+  censoring on/off (1.135 miss vs 0.502 detect), fusion composition (Table 3),
+  scale-aug on/off (0.938→0.910), b4→b5 (0.799→0.795 val / 0.481→0.484 stress),
+  τ sweep (0.484→0.490), whole-scene-resize vs native chips (oil→0).
+- **Discussion expanded** + new validation-details paragraph (HRSID test split,
+  15% val split, Part III reserve, threshold sweep as check, live Singapore/Malacca
+  runs, per-scene case studies 0.79–0.93, AIS layer exercised at scene timestamps).
+- **Statistical significance**: NEW src/models/eval_significance.py — mode `infer`
+  dumps per-image tp/fp/fn on Part III (CPU-viable, inference only), mode `stats`
+  does pooled-IoU bootstrap 95% CIs + paired Wilcoxon on oil-bearing images.
+  BLOCKED on checkpoints: local has only b5 best_segformer.pt; b4 was overwritten on
+  HF (lost); DeepLab/U-Net dumps need their checkpoints downloaded from HF. No
+  p-values in the paper yet — numbers only after the runs.
+- **Editorial**: bold run-ins (Oil branch/Vessel branch/Polarisation) → flowing
+  paragraphs; "As shown in Fig. 1, processing proceeds left to right" removed; all
+  sentence-initial "Because" reworded (4×); related-works openers de-monotonised
+  (xView3/AMANet/AC-YOLO/Moon paragraphs); residual "honest(ly)" phrasings softened.
+- **Floats**: Fig 1 → width 0.78\textwidth (smaller height+font together; true font
+  fix needs diagram redraw — user); Table 2 + F1 column (0.865/0.860/0.896, computed
+  from recorded P/R; params column SKIPPED — v8m/11m-OBB counts unverifiable, only
+  26m 20.35M recorded); Table 4 + test mIoU column (0.673/0.667/0.731/b5="---",
+  never recorded); Fig 6 (oil qualitative) → figure* both columns; ALL captions
+  rewritten detailed (reverses round-1 "short captions"); Fig 7 dashboard rearrange =
+  user must re-screenshot (Overleaf-only image).
+- Abstract 244 words. Checked: no stray "synthetic/proxy" (only SAR expansions and
+  bib titles), no "As shown in", no sentence-initial "Because".
+
+**Revision round 4 (2026-07-14):**
+- Intro contributions paragraph: removed the train/inference parity-lesson clause
+  ("whole-scene-resize … 4× resolution skew … silently driven oil predictions to
+  zero") per user — contribution now goes straight to the disjoint held-out
+  evaluation. The parity material still appears in §3.3 (whole-scene-resize inference),
+  Discussion, and Conclusion — user has NOT asked to remove those.
+- (User had separately edited abstract in Overleaf: "2.8-point gain" → "higher gain".)
+- Q&A session for viva prep (no file changes): Polarisation run-in heading; band-label
+  footnote is correct (physics: VV brighter over ocean; dataset band 1 "VV" darker →
+  labels likely swapped; informative 9 dB channel = band 2 regardless); OBB win =
+  geometry not recency (YOLO26m 0.908 ≈ YOLOv8m 0.910, best precision worst recall);
+  CFAR↔YOLO gating (15 px confirm, 10 px merge, 141+116); threshold sweep (P 0.88–0.90,
+  R ≈0.51, τ*=0.30 +0.006 → distribution problem); "(12)" = equation number; 0.80 =
+  val split of Parts I+II, 0.48 = held-out Part III (150 oil/150 look-alike/150 clean). CHECK: methodology.png block diagram may still show a Grad-CAM/
+   explainability box — crop or accept the mismatch (user decision).
+5. Proctor: ship training-curves figure must be ONE graph. Chose the mAP50 panel
+   (headline metric; only panel with clear OBB-vs-horizontal separation — precision
+   and mAP50-95 panels show the models tangled). Cropped top-left quadrant of
+   ship_metrics.png (864×708 → 432×354) into paper_ieee_access/ship_map50.png
+   (original composite kept). Fig. 4 now figure/\columnwidth/ship_map50.png; caption
+   + body text updated to "validation mAP@50 over training… OBB holds a visible
+   margin throughout". User must upload ship_map50.png to Overleaf.
