@@ -5,7 +5,7 @@ operational maritime-security picture: it detects **ships**, flags **dark (non-b
 vessels**, segments **oil spills**, scores **security and environmental risk**, and explains
 every decision — served through a FastAPI backend and a Next.js / MapLibre dashboard.
 
-> One sensor, one scene. Because ships and oil are extracted from the *same* georeferenced
+> One sensor, one scene. Because ships and oil are extracted from the _same_ georeferenced
 > Sentinel-1 image, they are automatically co-registered and time-aligned. The contribution
 > is the **integrated pipeline**, not six disconnected models.
 
@@ -13,21 +13,21 @@ every decision — served through a FastAPI backend and a Next.js / MapLibre das
 
 ## What it does
 
-| Stage | Task | Approach |
-|-------|------|----------|
-| **Ship detection** | Find every vessel in the scene | **Censored-mean CFAR** (training-free, resolution-agnostic) as the primary detector + **YOLO11m-OBB** (HRSID-trained) for oriented-box geometry; YOLO is kept only where it agrees with a CFAR cluster |
-| **Oil-spill segmentation** | Pixel-level slick vs. sea | **SegFormer** (benchmarked against DeepLabV3+ / U-Net), whole-scene-resize inference matching training |
-| **Dark-vessel flagging** | Detections with no AIS match | AIS cross-check at the scene acquisition timestamp |
-| **Risk + fusion** | Security / environmental scores | **Rule-based** zone-violation check + spill↔nearby-vessel linkage |
-| **Explainability** | Justify decisions | **Grad-CAM** (oil + ship) + **rule-contribution bars** |
+| Stage                      | Task                            | Approach                                                                                                                                                                                               |
+| -------------------------- | ------------------------------- | ------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------ |
+| **Ship detection**         | Find every vessel in the scene  | **Censored-mean CFAR** (training-free, resolution-agnostic) as the primary detector + **YOLO11m-OBB** (HRSID-trained) for oriented-box geometry; YOLO is kept only where it agrees with a CFAR cluster |
+| **Oil-spill segmentation** | Pixel-level slick vs. sea       | **SegFormer** (benchmarked against DeepLabV3+ / U-Net), whole-scene-resize inference matching training                                                                                                 |
+| **Dark-vessel flagging**   | Detections with no AIS match    | AIS cross-check at the scene acquisition timestamp                                                                                                                                                     |
+| **Risk + fusion**          | Security / environmental scores | **Rule-based** zone-violation check + spill↔nearby-vessel linkage                                                                                                                                      |
+| **Explainability**         | Justify decisions               | **Grad-CAM** (oil + ship) + **rule-contribution bars**                                                                                                                                                 |
 
 ---
 
 ## Datasets
 
-| Dataset | Used for | Notes |
-|---------|----------|-------|
-| **HRSID** (Wei et al., *IEEE Access* 2020) | Ship detection | 5,604 chips, 16,951 instances, 800×800; 3,642 train / 1,962 test (5,922 test instances) |
+| Dataset                                                                                                                                                                                    | Used for         | Notes                                                                                                                                   |
+| ------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------ | ---------------- | --------------------------------------------------------------------------------------------------------------------------------------- |
+| **HRSID** (Wei et al., _IEEE Access_ 2020)                                                                                                                                                 | Ship detection   | 5,604 chips, 16,951 instances, 800×800; 3,642 train / 1,962 test (5,922 test instances)                                                 |
 | **Trujillo-Acatitla et al. 2024** (Zenodo [8346860](https://zenodo.org/records/8346860) / [8253899](https://zenodo.org/records/8253899) / [13761290](https://zenodo.org/records/13761290)) | Oil segmentation | Sentinel-1 C-band VV/VH, Sigma0 in dB, 2048×2048. Parts I+II train/val (≈85/15), **Part III held out as a look-alike-heavy stress set** |
 
 > Live inference runs on **Sentinel-1 C-band IW GRD** scenes (VV/VH, ~10 m/px) pulled from
@@ -39,13 +39,13 @@ every decision — served through a FastAPI backend and a Next.js / MapLibre das
 
 **Ship detection — HRSID test split** (50 epochs, 2× NVIDIA T4)
 
-| Model | Precision | Recall | F1 | mAP@50 | mAP@50-95 |
-|-------|-----------|--------|-----|--------|-----------|
-| YOLOv8m (2023, horizontal) | 0.913 | 0.822 | 0.865 | 0.910 | 0.669 |
-| YOLO26m (2026, horizontal) | **0.926** | 0.802 | 0.860 | 0.908 | 0.671 |
-| **YOLO11m-OBB** (2024, oriented) | 0.920 | **0.873** | **0.896** | **0.938** | **0.688** |
+| Model                            | Precision | Recall    | F1        | mAP@50    | mAP@50-95 |
+| -------------------------------- | --------- | --------- | --------- | --------- | --------- |
+| YOLOv8m (2023, horizontal)       | 0.913     | 0.822     | 0.865     | 0.910     | 0.669     |
+| YOLO26m (2026, horizontal)       | **0.926** | 0.802     | 0.860     | 0.908     | 0.671     |
+| **YOLO11m-OBB** (2024, oriented) | 0.920     | **0.873** | **0.896** | **0.938** | **0.688** |
 
-Oriented-box *geometry* beats model recency: the 2026 YOLO26m is level with YOLOv8m, while
+Oriented-box _geometry_ beats model recency: the 2026 YOLO26m is level with YOLOv8m, while
 the OBB head holds a visible margin throughout training. A scale-augmented fine-tune
 (mAP@50 0.910) trades a little benchmark accuracy for robustness at 10 m/px.
 
@@ -55,21 +55,21 @@ sidesteps the HRSID→Sentinel-1 resolution gap entirely.
 
 **Oil segmentation** (50 epochs, NVIDIA H100)
 
-| Model | Params | val OilIoU | stress-set OilIoU | stress-set mIoU |
-|-------|--------|------------|-------------------|-----------------|
-| U-Net | 32.6 M | 0.750 | 0.369 | 0.673 |
-| DeepLabV3+ | 26.7 M | 0.773 | 0.356 | 0.667 |
-| SegFormer-b4 | 64.0 M | **0.799** | 0.481 | 0.731 |
-| SegFormer-b5 | 82.0 M | 0.795 | **0.484** | **0.733** |
+| Model        | Params | val OilIoU | stress-set OilIoU | stress-set mIoU |
+| ------------ | ------ | ---------- | ----------------- | --------------- |
+| U-Net        | 32.6 M | 0.750      | 0.369             | 0.673           |
+| DeepLabV3+   | 26.7 M | 0.773      | 0.356             | 0.667           |
+| SegFormer-b4 | 64.0 M | **0.799**  | 0.481             | 0.731           |
+| SegFormer-b5 | 82.0 M | 0.795      | **0.484**         | **0.733**       |
 
 SegFormer leads on validation OilIoU ≈ **0.80**. Part III is a deliberately adversarial
 partition (⅓ look-alikes) used as a **cross-distribution robustness analysis**: pooled
-OilIoU drops to 0.484 (95% bootstrap CI [0.372, 0.612]) while the *median* oil-bearing
+OilIoU drops to 0.484 (95% bootstrap CI [0.372, 0.612]) while the _median_ oil-bearing
 scene still reaches 0.767 — the aggregate is pulled down by a hard look-alike tail, not by
 uniform failure. Per-scene IoU on Gulf of Mexico / Java Sea / Mediterranean slicks ranges
 0.79–0.93, and a Bay of Biscay look-alike yields zero false-positive oil pixels. The
 architecture ordering is significant (paired Wilcoxon over 150 oil-bearing scenes:
-b5 vs DeepLabV3+ *p* = 9.5e-12, vs U-Net *p* = 3.3e-04).
+b5 vs DeepLabV3+ _p_ = 9.5e-12, vs U-Net _p_ = 3.3e-04).
 
 ---
 
@@ -158,18 +158,3 @@ Checkpoints live on the private HF repo `shaunmarvell/maritime-security-intellig
 (`vessel/` and `oil/` subfolders).
 
 ---
-
-## Scope and limitations
-
-- **No oil volume.** SAR yields slick **area / extent**, never thickness or volume.
-- **Oil model = SegFormer.** The "OilSAM2" SOTA has no released code and silently falls
-  back to SegFormer; results are reported as SegFormer throughout.
-- **Cross-region generalisation is the open problem.** A threshold sweep (τ 0.30–0.80)
-  moves stress-set OilIoU only +0.006, so the gap lies in the training distribution, not
-  the operating point. Cross-region training data is the principled fix.
-- **Ship resolution gap.** HRSID is finer-resolution than Sentinel-1 IW (~10 m/px); CFAR
-  bridges the gap at inference, and xView3-SAR fine-tuning is the long-term fix.
-- **AIS coverage.** Free historical AIS (Global Fishing Watch) exposes only gap/absence
-  events, lags 72–96 h, and covers fishing vessels only. An operational deployment
-  connects a position feed such as NOAA MarineCadastre or the Danish Maritime Authority
-  open feed; the matching pipeline is unchanged.
