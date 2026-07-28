@@ -1,7 +1,7 @@
 # --- data / weights / caches ---
 # anchored to repo root with a leading slash so these do NOT also match src/data/ etc.
-/data/
 /checkpoints/
+/backend/data/
 /smoke_data/
 *.pt
 *.pth
@@ -18,6 +18,16 @@ dist/
 *.zip
 *.tif
 *.tiff
+
+# --- /data: everything is local except two small published slices ---
+# (the full HRSID + Zenodo sets are public; download_vessel_data.py / the oil notebook fetch them)
+/data/*
+!/data/oil/
+!/data/vessels/
+/data/vessels/*
+!/data/vessels/hrsid_sample/
+# re-allow the 4 oil scenes, which the global *.tif rule above would otherwise swallow
+!/data/oil/*.tif
 
 # --- logs ---
 *.log
