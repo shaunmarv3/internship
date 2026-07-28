@@ -13,13 +13,11 @@ every decision — served through a FastAPI backend and a Next.js / MapLibre das
 
 ## What it does
 
-| Stage                      | Task                            | Approach                                                                                                                                                                                               |
-| -------------------------- | ------------------------------- | ------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------ |
-| **Ship detection**         | Find every vessel in the scene  | **Censored-mean CFAR** (training-free, resolution-agnostic) as the primary detector + **YOLO11m-OBB** (HRSID-trained) for oriented-box geometry; YOLO is kept only where it agrees with a CFAR cluster |
-| **Oil-spill segmentation** | Pixel-level slick vs. sea       | **SegFormer** (benchmarked against DeepLabV3+ / U-Net), whole-scene-resize inference matching training                                                                                                 |
-| **Dark-vessel flagging**   | Detections with no AIS match    | AIS cross-check at the scene acquisition timestamp                                                                                                                                                     |
-| **Risk + fusion**          | Security / environmental scores | **Rule-based** zone-violation check + spill↔nearby-vessel linkage                                                                                                                                      |
-| **Explainability**         | Justify decisions               | **Grad-CAM** (oil + ship) + **rule-contribution bars**                                                                                                                                                 |
+| Stage                      | Task                           | Approach                                                                                                                                                                                               |
+| -------------------------- | ------------------------------ | ------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------ |
+| **Ship detection**         | Find every vessel in the scene | **Censored-mean CFAR** (training-free, resolution-agnostic) as the primary detector + **YOLO11m-OBB** (HRSID-trained) for oriented-box geometry; YOLO is kept only where it agrees with a CFAR cluster |
+| **Oil-spill segmentation** | Pixel-level slick vs. sea      | **SegFormer** (benchmarked against DeepLabV3+ / U-Net), whole-scene-resize inference matching training                                                                                                 |
+| **Dark-vessel flagging**   | Detections with no AIS match   | AIS cross-check at the scene acquisition timestamp                                                                                                                                                     |
 
 ---
 
