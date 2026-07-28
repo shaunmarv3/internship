@@ -1,3 +1,4 @@
+# --- data / weights / caches ---
 # anchored to repo root with a leading slash so these do NOT also match src/data/ etc.
 /data/
 /checkpoints/
@@ -8,6 +9,7 @@
 wandb/
 __pycache__/
 *.pyc
+.pytest_cache/
 .env
 *.egg-info/
 dist/
@@ -16,3 +18,40 @@ dist/
 *.zip
 *.tif
 *.tiff
+
+# --- logs ---
+*.log
+
+# --- LaTeX / paper sources (kept locally, not published) ---
+/paper/
+/paper_ieee_access/
+/amazon_wildfire_detection/
+/internship/
+/ppt/
+/pptimg/
+*.docx
+*.pptx
+*.aux
+*.bbl
+*.blg
+*.out
+*.synctex.gz
+
+# --- retired / local-only code ---
+/app/
+/docs/
+
+# --- working notes: only README.md is published ---
+/*.md
+!/README.md
+
+# --- agent scaffolding ---
+.agents/
+.claude/
+CLAUDE.md
+AGENTS.md
+claude.md
+
+# --- scratch scene renders at repo root ---
+/*.png
+/*.jpg
