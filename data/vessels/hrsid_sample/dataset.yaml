@@ -1,0 +1,8 @@
+# HRSID -> YOLO OBB — 50-chip sample (see README.md)
+# Paths are relative to this file, so it works from any clone location.
+path: .
+train: images
+val:   images
+
+nc: 1
+names: ['ship']
